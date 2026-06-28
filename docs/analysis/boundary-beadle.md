@@ -45,8 +45,8 @@ count is a Goodhart trap, because a lint nit and a data-loss/directional defect
 are not the same unit.
 
 - **beadle owns the class.** The defect-nature spectrum, severity (silent
-  source-of-truth integrity at top), and recoverability tiers are beadle
-  finding-004/005. beadle assigns a defect its class.
+  source-of-truth integrity at top), and recoverability tiers are beadle's.
+  beadle assigns a defect its class.
 - **critic owns the rate.** critic consumes beadle's class, applies a class
   weight `w(class)`, and computes class-weighted efficiency across runs — always
   publishing the class histogram beside the scalar.
@@ -55,6 +55,22 @@ Neither re-does the other's half: critic never re-classifies a defect; beadle
 never computes cross-run efficiency. The weight function itself is an
 arena-methodology design decision (routed to aae-orc kos), but the *shape* —
 class-weighted, never an unweighted count — is fixed.
+
+### Single source of truth (the coupling, documented — not yet a contract)
+
+This taxonomy is the **one genuine shared surface** between the two repos:
+beadle classifies *into* it, critic weights *over* it. Its canonical source is
+the beadle bedrock node
+**`beadle/_kos/nodes/bedrock/elem-defect-classification-superset.yaml`**
+(severity precedence in `elem-silent-integrity-severity.yaml`; the axes are
+narrated in beadle finding-004/005/006). It lives there as **prose**, not as a
+machine-readable enumeration — there is deliberately **no shared schema or
+library yet** (session-051 decision: document the coupling; defer extraction
+until critic has running code and a second consumer is real, per SOUL.md §7
+gradual elaboration). When critic consumes a class, it reads beadle's node as
+the authority; if a class-id contract is ever extracted, it would be an
+orc-level artifact mirroring `aae-orc/labels/schema.yaml`, not a copy living in
+critic.
 
 ## Shared substrate, opposite ends
 
