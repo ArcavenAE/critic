@@ -37,6 +37,25 @@ beadle.
    resolver-storm case this session, **verifies an issue already exists and
    stays silent.**
 
+## Defect class: beadle classifies, critic weights
+
+A specific division that matters for the efficiency measurands. critic's headline
+metric is defects per unit spend (per-token / per-dollar / per-hour) — but a raw
+count is a Goodhart trap, because a lint nit and a data-loss/directional defect
+are not the same unit.
+
+- **beadle owns the class.** The defect-nature spectrum, severity (silent
+  source-of-truth integrity at top), and recoverability tiers are beadle
+  finding-004/005. beadle assigns a defect its class.
+- **critic owns the rate.** critic consumes beadle's class, applies a class
+  weight `w(class)`, and computes class-weighted efficiency across runs — always
+  publishing the class histogram beside the scalar.
+
+Neither re-does the other's half: critic never re-classifies a defect; beadle
+never computes cross-run efficiency. The weight function itself is an
+arena-methodology design decision (routed to aae-orc kos), but the *shape* —
+class-weighted, never an unweighted count — is fixed.
+
 ## Shared substrate, opposite ends
 
 - **OTEL per-run attribution (#324 / finding-007):** beadle *surfaced* it;

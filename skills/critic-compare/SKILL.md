@@ -61,6 +61,25 @@ From `.factory/STATE.md` / cycle dirs: passes-to-clean, fix-burst count, streak
 resets. Rising passes-to-clean across generations of the same `source_repo` is a
 **convergence regression** — a candidate death-spiral proxy that needs no OTEL.
 
+### 3b. Defect-detection efficiency — CLASS-WEIGHTED, never a raw count
+The headline arena measurand is defects per unit spend (per-token, per-dollar,
+per-hour). **Defect class dominates count:** a lint/hygiene nit and a logic /
+data-loss / directional / silent-integrity defect are different units. Summing
+them into one scalar is a Goodhart trap (a nit-spewing factory "wins"). So:
+
+- Get each defect's **class from beadle** (the defect-nature / severity /
+  recoverability taxonomy — beadle finding-004/005). critic does NOT re-classify;
+  it consumes beadle's class and applies a class weight `w(class)`.
+- `detection_value = Σ w(class_i)`; divide by tokens / $ / hours for the three
+  efficiency axes.
+- **Always report the class histogram next to the scalar** so a high score can't
+  hide a pile of trivia. Never publish an unweighted defects-per-X number.
+- For factory *evaluation*, prefer the prevention view: high-class defect-rate
+  *declining* across generations of one `source_repo` beats raw detection count.
+
+The class weights are a design decision (route to the arena-methodology node);
+the *shape* is fixed — class-weighted, with the histogram shown.
+
 ### 4. Velocity — only if honestly attributable
 Commits/active-hour and $/commit are the headline velocity measurands, but the
 cost/token half is machine-wide until #324. Phase 0: report commit-based

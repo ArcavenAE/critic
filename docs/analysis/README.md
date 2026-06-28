@@ -72,6 +72,59 @@ This is the template for a critic detector: a per-run, on-disk, count-with-rate
 signal that distinguishes a healthy run from a degraded one **without** the
 missing OTEL dimension. See `skills/critic-compare/SKILL.md`.
 
+## Efficiency measurands — and why they MUST be class-weighted
+
+The headline arena question is efficiency: **how much defect-detection (or
+defect-*prevention*) does a run/factory buy per unit of spend?** Three spend
+axes:
+
+- **per-token** — defects per 1k tokens (input+output, or cache-adjusted)
+- **per-dollar** — defects per `claude_code_cost_usage_USD_total` delta
+- **per-time** — defects per active-hour / per wall-clock
+
+But a **raw** defect count over any of these is a Goodhart trap. A factory that
+emits a thousand lint nits would dominate "defects-per-token" while a factory
+that prevents one silent data-loss defect would score near zero. **Defect class
+dominates defect count.** A lint/hygiene finding and a logic / data-loss /
+directional / source-of-truth-integrity defect are not the same unit and must
+not be summed into one scalar.
+
+### The weighting comes from beadle, not invented here
+
+beadle already owns the defect-classification taxonomy (beadle finding-005 +
+finding-004): the **defect-nature** spectrum (mechanical → conceptual: syntax/
+typo → off-by-one → null/resource → concurrency → logic → algorithmic → spec →
+design → **directional/intent-misalignment**), **severity** (with **silent
+source-of-truth integrity** as the top class — invisibility + compounding), and
+**recoverability** (regenerable output < spec/process < irreplaceable learning).
+critic does not re-derive this; it **consumes** beadle's class on a defect and
+applies a class weight.
+
+### Class-weighted efficiency (the honest metric)
+
+```
+detection_value(run) = Σ over defects found  w(class_i)
+efficiency_per_token = detection_value / tokens
+efficiency_per_$     = detection_value / cost_usd
+efficiency_per_hour  = detection_value / active_hours
+```
+
+where `w(class)` is monotonic in severity × recoverability, e.g. lint/hygiene ≪
+logic ≪ data-loss/directional ≪ silent-integrity. The weights are a **design
+decision routed to the arena-methodology node**, not hard-coded here — but the
+*shape* is fixed: **never an unweighted count.** Report the class histogram
+alongside the scalar so the weighting is auditable and a high score can't hide a
+pile of trivia. (Same discipline as beadle's "pair every count with an outcome.")
+
+### Prevention counts too, not just detection
+
+For a factory being evaluated (not a triage tool), the valuable signal is often
+defects **prevented / not introduced** per unit spend — measurable as defect
+class-rate *declining* across generations of the same `source_repo`. A run that
+spends more tokens but ships fewer high-class defects is winning, and a raw
+detection-rate metric would misread that as "found fewer defects = worse." The
+class-weighted, generation-over-generation view is what distinguishes the two.
+
 ## Non-goals (this layer)
 
 - No GitHub mutation. critic emits findings; beadle (or a human) acts.
