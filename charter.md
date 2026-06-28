@@ -44,6 +44,15 @@ Tracked in `aae-orc`:
 - The arena engine and evaluation methodology (judges, holdout, statistics,
   factory-of-factories) — `question-agent-arena-evaluation`.
 - Long-term runtime location (beyond the initial aae-orc host).
+- **Shared team telemetry** — expand critic from single-machine local analysis
+  to a team-wide pooled observability store, for statistical sufficiency across
+  a distributed team's runs. Needs commit-ref-level factory provenance +
+  cross-factory normalization, and inherits orc F26's unsolved distributed-store
+  problem. Prior-art scan done (session-051): adopt SWE-bench/Aider/OTel-gen_ai/
+  IEEE-1044/ODC; borrow LMArena Bradley-Terry + HAL cost-Pareto; three confirmed
+  gaps (factory-level pairwise ELO, defect-class-weighted efficiency, cross-factory
+  normalization) are critic's white space. See
+  [docs/analysis/global-telemetry.md](docs/analysis/global-telemetry.md).
 
 ## Design references (authoritative — in `aae-orc`)
 
