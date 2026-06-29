@@ -90,6 +90,14 @@ schema is "internal to Claude Code and changes between versions" — **do not ma
 it a primary dependency; prefer OTel or hooks, use the transcript for offline
 backfill only** (the same posture finding-007 took for the dispatcher-log join).
 
+One transcript record type is uniquely valuable and has no OTel/hook equivalent:
+**`system` records with `subtype=compact_boundary`**, carrying a `compactMetadata`
+object (`trigger` auto/manual, `preTokens`, `postTokens`, `durationMs`,
+`preCompactDiscoveredTools`, plus preserved-segment UUIDs). This is the only
+surface that exposes the cost and effect of auto-compaction — a real factory
+expense (observed 80–116 s wall-clock per event, ~one event per ~2 h of dense
+work in a 20 h session) that no other tap reports. See Q7.
+
 ### A3. Hooks — synchronous instrumentation points
 
 Every hook gets JSON on stdin: `session_id`, `transcript_path`, `cwd`,
@@ -382,6 +390,22 @@ then profile. Build order:
 6. **Cross-provider normalization** — the factory may run on Bedrock/Vertex/
    Anthropic-direct (finding-010 §9); span field names and TTFT availability
    differ (B2). The `gen_ai.*` mapping layer is where this reconciles.
+7. **Compaction as a profiled factory event.** Auto-compaction is a recurring,
+   unbudgeted cost in any long-running unit: each event spends 80–116 s of
+   wall-clock and re-writes the cached prefix (a cache-creation premium — the
+   write-amplification finding-007 chased, and finding-010 §8's death-spiral
+   mechanism). The `compactMetadata` record (A2) is the only tap that exposes it.
+   Two metrics worth deriving across runs: **compaction frequency** (events per
+   token of useful work — a high rate signals context bloat or a too-low trigger)
+   and **post-compaction headroom** (`trigger_threshold − postTokens`; when a
+   compaction preserves a large recent segment, `postTokens` lands high — once
+   observed at 54009 vs a ~12–25k floor — leaving little headroom so the *next*
+   compaction can re-fire within minutes, observed 6.4 min apart). Open: is the
+   headroom wrinkle a Claude Code efficiency defect worth reporting upstream, or
+   benign tail behavior? **n=1 anecdotally; decide only after instrumenting
+   `compactMetadata` across several long sessions** — filing from a single
+   occurrence risks a false report. This is the critic-owned data collection that
+   gates any anthropics/claude-code issue on the topic.
 
 ## kos note
 
