@@ -1,0 +1,5 @@
+graph_id: critic
+scope: repo
+description: Run registry and agent arena
+schema_version: '0.3'
+includes: []
