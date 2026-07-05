@@ -21,7 +21,7 @@ This same field set spans three surfaces:
 |---|:--:|:--:|:--:|:--:|---|
 | `schema_version` | ✓ | ✓ | — | **yes** | declarative-contract version |
 | `tier` | ✓ | ✓ | ✓ | **yes** | `legion` for agent/factory runs |
-| `kind` | ✓ | ✓ | — | **yes** | `legion` (agent/factory) \| `spike` (human); spikes have `factory` empty |
+| `kind` | ✓ | ✓ | — | **yes** | `legion` (agent/factory) \| `spike` (human throwaway) \| `contrib` (human-governed contribution fork of an external upstream); `spike` and `contrib` have `factory` empty |
 | `source_repo` | ✓ | ✓ | ✓ | **yes** | the canonical repo this was struck from (case-preserving) |
 | `source_remote` | ✓ | ✓ | — | no | git remote of the source |
 | `factory` | ✓ | ✓ | ✓ | **yes** | e.g. `vsdd-factory` |
@@ -61,6 +61,40 @@ created_by: vsdd-factory
 created_at: 2026-06-28T00:00:00Z
 question: "Does the timeslice framing reduce relay latency under load?"
 ```
+
+## Example — `kind: contrib` (contribution fork)
+
+```yaml
+# .run.yaml — contribution fork of an external upstream
+schema_version: 1
+tier: legion
+kind: contrib
+source_repo: vsdd-factory
+source_remote: git@github.com:DrBothen/vsdd-factory.git
+factory:            # empty — human-governed
+lifecycle: retained
+created_by: skippy
+created_at: 2026-07-05T00:00:00Z
+question: "Can we land feature+factory-artifact changes upstream as an external contributor?"
+```
+
+`contrib` marks a long-lived, human-governed fork held **only** to offer
+PRs to an upstream we don't control — clone-only, never developed as its
+own project. Differences from `legion`/`spike`:
+
+- `source_repo`/`source_remote` point at the **external upstream**, not an
+  ArcavenAE canon repo.
+- `lifecycle: retained` — it persists as long as the contribution
+  relationship does.
+- **The marker is untracked** in a contrib fork (add `.run.yaml` to
+  `.git/info/exclude`, not `.gitignore`): every branch may flow upstream
+  as a PR, and factory metadata must never ride one. This is the
+  "untouchable-repo path" (Q5) applied to our own fork of an untouchable
+  upstream — the Dolt row remains the index of record; the marker is a
+  local convenience.
+
+First instance: `ArcavenAE/vsdd-factory` (see aae-orc
+`docs/vsdd-factory-contrib.md`).
 
 ## Notes
 
