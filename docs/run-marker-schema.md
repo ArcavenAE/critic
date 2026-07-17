@@ -20,8 +20,8 @@ This same field set spans three surfaces:
 | Field | Marker | Dolt | Property | Required | Notes |
 |---|:--:|:--:|:--:|:--:|---|
 | `schema_version` | ✓ | ✓ | — | **yes** | declarative-contract version |
-| `tier` | ✓ | ✓ | ✓ | **yes** | `legion` for agent/factory runs |
-| `kind` | ✓ | ✓ | — | **yes** | `legion` (agent/factory) \| `spike` (human throwaway) \| `contrib` (human-governed contribution fork of an external upstream); `spike` and `contrib` have `factory` empty |
+| `tier` | ✓ | ✓ | ✓ | **yes** | `legion` for agent/factory runs; `integration` for tier-2 contribution forks |
+| `kind` | ✓ | ✓ | — | **yes** | `legion` (agent/factory) \| `spike` (human throwaway) \| `fork` (human-governed contribution fork of an external upstream — renamed from `contrib`, 2026-07-17); `spike` and `fork` have `factory` empty |
 | `source_repo` | ✓ | ✓ | ✓ | **yes** | the canonical repo this was struck from (case-preserving) |
 | `source_remote` | ✓ | ✓ | — | no | git remote of the source |
 | `factory` | ✓ | ✓ | ✓ | **yes** | e.g. `vsdd-factory` |
@@ -62,13 +62,18 @@ created_at: 2026-06-28T00:00:00Z
 question: "Does the timeslice framing reduce relay latency under load?"
 ```
 
-## Example — `kind: contrib` (contribution fork)
+## Example — `kind: fork` (contribution fork)
+
+> Renamed from `kind: contrib` (2026-07-17): with the orc's `contrib/`
+> directory now meaning direct-contribution checkouts (origin is theirs),
+> the fork variety takes the accurate name. Forks are tier-2, live in the
+> orc's `forks/` directory (not `run/`), and carry `tier: integration`.
 
 ```yaml
 # .run.yaml — contribution fork of an external upstream
 schema_version: 1
-tier: legion
-kind: contrib
+tier: integration
+kind: fork
 source_repo: vsdd-factory
 source_remote: git@github.com:DrBothen/vsdd-factory.git
 factory:            # empty — human-governed
@@ -78,7 +83,7 @@ created_at: 2026-07-05T00:00:00Z
 question: "Can we land feature+factory-artifact changes upstream as an external contributor?"
 ```
 
-`contrib` marks a long-lived, human-governed fork held **only** to offer
+`fork` marks a long-lived, human-governed fork held **only** to offer
 PRs to an upstream we don't control — clone-only, never developed as its
 own project. Differences from `legion`/`spike`:
 
@@ -86,15 +91,17 @@ own project. Differences from `legion`/`spike`:
   ArcavenAE canon repo.
 - `lifecycle: retained` — it persists as long as the contribution
   relationship does.
-- **The marker is untracked** in a contrib fork (add `.run.yaml` to
+- **The marker is untracked** in a contribution fork (add `.run.yaml` to
   `.git/info/exclude`, not `.gitignore`): every branch may flow upstream
   as a PR, and factory metadata must never ride one. This is the
   "untouchable-repo path" (Q5) applied to our own fork of an untouchable
   upstream — the Dolt row remains the index of record; the marker is a
   local convenience.
 
-First instance: `ArcavenAE/vsdd-factory` (see aae-orc
-`docs/vsdd-factory-contrib.md`).
+Instances: `ArcavenAE/vsdd-factory` (→ DrBothen), `ArcavenAE/jira-cli`
+and `ArcavenAE/wirerust` (→ Zious11). See aae-orc
+`docs/vsdd-factory-contrib.md` and the 2026-07-17 addendum in the orc's
+`_kos/ideas/three-tier-repo-taxonomy.md`.
 
 ## Notes
 
