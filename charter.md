@@ -53,6 +53,16 @@ Tracked in `aae-orc`:
   gaps (factory-level pairwise ELO, defect-class-weighted efficiency, cross-factory
   normalization) are critic's white space. See
   [docs/analysis/global-telemetry.md](docs/analysis/global-telemetry.md).
+- **Defect escape point** — measure *where* a defect is caught relative to
+  its author, not how many defects exist. Volume is confounded by a
+  prototyping programme (81% of recent tickets are design/planning, not
+  defects); escape point is not. Lands on the defect-class-weighted
+  efficiency gap above. A Phase-0 tripwire ships in
+  `skills/critic-escape/`, but the measure is **not yet meaningful**: first
+  measurement found 1 escape in 257 post-merge runs, so critic must
+  accumulate the series over months before reading anything from it.
+  Diagnostic only, never a gate (ADR-007). See
+  [docs/analysis/defect-escape-point.md](docs/analysis/defect-escape-point.md).
 
 ## Design references (authoritative — in `aae-orc`)
 
