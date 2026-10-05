@@ -40,6 +40,7 @@ frontier (open), and graveyard (ruled out).
 3. Write an Exploration Brief in _kos/probes/
 4. Do the probe work
 5. Write a finding in _kos/findings/
+   Mint the id with `kos id finding <slug>`; never hand-allocate a number.
 6. Harvest: update affected nodes in _kos/nodes/
 
 Cross-repo questions belong in the orchestrator's `_kos/`, not here.
