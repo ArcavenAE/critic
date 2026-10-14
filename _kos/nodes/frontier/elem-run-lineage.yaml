@@ -1,0 +1,44 @@
+id: elem-run-lineage
+type: element
+confidence: frontier
+title: "Run lineage records derivation only, as an append-only DAG; grouping stays in columns"
+tags:
+  - registry
+  - lineage
+  - mvp
+content: |
+  Proposed 2026-10-14 in docs/design/critic-mvp.md, section 4. Not ratified.
+
+  L1. A lineage edge records derivation only: the child's starting state
+      came from the parent's state. There are two edge kinds:
+      `struck-from` (a canon repository to a legion copy) and
+      `resumed-from` (a snapshot to a run that starts from it).
+  L2. Grouping is not lineage. Cohort, block and arm are columns on the run
+      record. Two runs in one pair share a block, not an edge.
+  L3. `parents` is a list from day one, so the store is a DAG, as the
+      registry design asks. The first consumers use at most one parent per
+      run.
+  L4. A seed is a run. Every pilot and series run that starts from it lists
+      it as `resumed-from`, so a close scoped to one seed becomes a lineage
+      query: the runs descended from that seed.
+  L5. Lineage is append-only. A wrong edge is corrected by a record that
+      names the edge it supersedes, never by an edit in place.
+
+  Why: the registry design called for "a list plus parent and run_id
+  pointers, a DAG from day one", but left open what an edge means. Paired
+  measurement adds a second relation (pairing) that is easy to encode as an
+  edge and wrong to. Keeping edges for derivation keeps both relations
+  queryable without either blurring the other.
+
+  Valid until 2026-10-28, when the architect role re-checks it.
+edges:
+  - target: elem-run-record-model
+    type: supports
+    note: "defines the record's parents field"
+  - target: aae-orc::question-legion-run-registry
+    type: derives
+    note: "the registry's Q4 lineage choice (structured parent, run_id, generation) made precise: what an edge means and what stays a column"
+provenance:
+  created_by: agent
+  created_at: "2026-10-14"
+  discovered_from: docs/design/critic-mvp.md
