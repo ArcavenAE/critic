@@ -1,0 +1,69 @@
+id: elem-run-record-model
+type: element
+confidence: frontier
+title: "critic's run record: one record per measured or indexed execution, of which a legion repository is one locus"
+tags:
+  - registry
+  - arena
+  - mvp
+content: |
+  Proposed 2026-10-14 in docs/design/critic-mvp.md (aae-orc-hp96). Not
+  ratified.
+
+  A run is one execution critic measures or indexes. That covers a factory
+  session set on a test project (kind `trial`), a seed run, or a legion,
+  spike or fork repository (the marker kinds in docs/run-marker-schema.md).
+  The record extends the marker field set and does not replace it: every
+  marker field keeps its meaning and values. The marker's `run_id` stays the
+  cohort, `status` stays the lifecycle, and `parent` becomes the first
+  `derived-from` lineage edge.
+
+  Fields beyond the marker:
+  - `arm`: a free treatment label;
+  - `block` and `order`: pair membership, beside the marker's `run_id`
+    cohort;
+  - `protocol_role`: smoke, live-test, seed, pilot, series, fidelity,
+    reference, drill or defaults;
+  - `parents`: lineage, governed by elem-run-lineage;
+  - `protocol_sha` and `harness_build`;
+  - `locus`: a repository or checkout, with start and end commits;
+  - `sessions` and `transcript_roots`;
+  - start and end times;
+  - `run_state`: started, completed, stalled, crashed, timed-out,
+    limit-stopped or void, with `void_rule` naming the protocol rule that set
+    void;
+  - `host_class`: the role of the host, never its name;
+  - `outcome`;
+  - `ledger` and `cost` references, by path and sha256;
+  - `metrics`, as open JSON;
+  - `kos_finding`.
+
+  Never in the record: transcript content, secret values or host names.
+  Transcripts stay in the private runtime area (charter B2).
+
+  Why one record: the two first consumers, the vsdd-factory team probe and
+  the rc.22 against rc.24 side-by-side (aae-orc-17ki), are factory
+  executions, not repositories. One shape with a free `arm` label serves
+  both. A legion repository becomes the `legion` locus of the same record,
+  so registry sync is added later without a second model.
+
+  Store: Dolt stays the index of record (charter B3), in a `critic`
+  database. Where that database lives is an open operator ruling (design
+  section 9, R2).
+
+  Valid until 2026-10-28, when the architect role re-checks it, or until R1
+  is ruled, whichever comes first.
+edges:
+  - target: aae-orc::question-legion-run-registry
+    type: derives
+    note: "extends the registry's marker and table field set; a legion repository becomes one locus of the run record"
+  - target: aae-orc::question-agent-arena-evaluation
+    type: supports
+    note: "the record is the input the arena's comparison statistics (A4) read: arm, cohort, block and outcome per run"
+  - target: marvel::question-vsdd-factory-as-marvel-team
+    type: supports
+    note: "first consumer: the probe's runs, seed, pairs and protocol roles map onto the record"
+provenance:
+  created_by: agent
+  created_at: "2026-10-14"
+  discovered_from: docs/design/critic-mvp.md

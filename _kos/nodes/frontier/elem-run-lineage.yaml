@@ -1,0 +1,49 @@
+id: elem-run-lineage
+type: element
+confidence: frontier
+title: "Run lineage records derivation only, as an append-only DAG; grouping stays in columns"
+tags:
+  - registry
+  - lineage
+  - mvp
+content: |
+  Proposed 2026-10-14 in docs/design/critic-mvp.md, section 4. Not ratified.
+
+  L1. A lineage edge records derivation only, between two runs: the child's
+      starting state came from the parent's state. There are two edge kinds:
+      `derived-from` (the marker's `parent`) and `resumed-from` (a run that
+      starts from another run's snapshot, such as a seed). A run struck
+      directly from canon has no edge; its `source_repo` names canon, as the
+      marker's "empty = struck from canon" says.
+  L2. Grouping is not lineage. The cohort (the marker's `run_id`), block and
+      arm are columns on the run record. Two runs in one pair share a block, not an edge.
+  L3. `parents` is a list from day one, so the store is a DAG, as the
+      registry design asks. The first consumers use at most one parent per
+      run.
+  L4. A seed is a run. Every pilot and series run that starts from it lists
+      it as `resumed-from`, so a close scoped to one seed becomes a lineage
+      query: the runs descended from that seed. Runs that start from a brief
+      instead carry no edge.
+  L5. Lineage is append-only. An edge is a row with its own `edge_id`; a
+      correction is a row whose `supersedes` names an `edge_id`, with an
+      optional replacement edge and a reason. The effective lineage is every
+      edge no correction supersedes. Nothing is edited in place.
+
+  Why: the registry design called for "a list plus parent and run_id
+  pointers, a DAG from day one", but left open what an edge means. Paired
+  measurement adds a second relation (pairing) that is easy to encode as an
+  edge and wrong to. Keeping edges for derivation keeps both relations
+  queryable without either blurring the other.
+
+  Valid until 2026-10-28, when the architect role re-checks it.
+edges:
+  - target: elem-run-record-model
+    type: supports
+    note: "defines the record's parents field"
+  - target: aae-orc::question-legion-run-registry
+    type: derives
+    note: "the registry's Q4 lineage choice (structured parent, run_id, generation) made precise: what an edge means and what stays a column"
+provenance:
+  created_by: agent
+  created_at: "2026-10-14"
+  discovered_from: docs/design/critic-mvp.md
