@@ -37,31 +37,31 @@ So run-sync would discover nothing today: no property to query, and no marker to
 
 ## 3. The run record
 
-**One record per run.** A run is one execution that critic measures or indexes: a factory session set on a test project, a seed run, or a legion repository. Its fields extend the marker schema (`docs/run-marker-schema.md`) and do not replace it. Every marker field keeps its meaning and its values; the fields below are new, except where a row says it is the marker's.
+**One record per run.** A run is one execution that critic measures or indexes: a factory session set on a test project, a seed run, or a legion repository. Its fields extend the run-marker schema (`docs/run-marker-schema.md`), both its marker layer and its Dolt layer, and do not replace it. Every schema field keeps its meaning, and every value the schema defines keeps its meaning. One field gains a value: `kind` adds `trial`, which exists in the record only. The schema's kinds are unchanged, and a `.run.yaml` marker cannot carry `trial` unless the schema adds it in a change of its own. The fields below are new, except where a row says it is the schema's.
 
 | field | meaning | consumer use |
 |---|---|---|
 | `id` | unique, immutable, lowercase, no slashes | the probe's run key |
-| `kind` | `legion`, `spike`, `fork` (the marker's kinds), plus **`trial`**: an execution measured under a protocol | probe and 17ki runs are trials |
-| `factory`, `factory_ref` | the factory, and its pins: pack version, upstream commit, pack digest | arm A and arm B share these in the probe; 17ki's arms differ only here |
+| `kind` | the schema's field: `legion`, `spike`, `fork` (the schema's kinds), plus **`trial`**, record only: an execution measured under a protocol | probe and 17ki runs are trials |
+| `factory`, `factory_ref` | `factory` is the schema's field; `factory_ref`, new, holds its pins: pack version, upstream commit, pack digest | arm A and arm B share these in the probe; 17ki's arms differ only here |
 | `arm` | a free label for the treatment | `one-session` and `per-branch`; or `rc.22` and `rc.24` |
 | `run_id` | the marker's field, unchanged: it groups a batch or generation, the cohort. For a trial it names the series: protocol sha plus series number. The record's `id` names the run; `run_id` names its cohort | one `run_id` per probe series |
 | `block`, `order` | the pair index and position within it; empty outside a paired series | the strict pairs |
 | `protocol_role` | `smoke`, `live-test`, `seed`, `pilot`, `series`, `fidelity`, `reference`, `drill`, `defaults`, or empty | only `series` enters the comparison |
-| `parents` | lineage edges (section 4). The marker's `parent` is the first entry, as a `derived-from` edge | the seed is the parent of every pilot and series run that starts from it |
+| `parents` | the effective-lineage view of the edge rows (section 4, L5): the parents named by every edge that no correction supersedes. It is read from the rows, never written directly. The marker's `parent` is the first entry, as a `derived-from` edge | the seed is the parent of every pilot and series run that starts from it |
 | `protocol_sha`, `harness_build` | the frozen protocol and client build | the drift stop reads them |
 | `locus` | where the run's state lives: a repository at a commit, or a checkout path under the runtime root, with start and end commits | the suite runs on the end commit |
 | `sessions` | harness session ids and marvel session keys | joins transcripts to seats |
 | `transcript_roots` | paths to the run's transcripts, under the runtime root | the ledger's input |
 | `started_at`, `ended_at` | wall clock as the protocol defines it | the speed axis |
-| `status` | the marker's field, unchanged: `active`, `archived` or `abandoned` | lifecycle, as for any run |
+| `status` | the schema's Dolt-layer field, unchanged: `active`, `archived` or `abandoned` | lifecycle, as for any run |
 | `run_state` | the execution's state, a new field: `started`, `completed`, `stalled`, `crashed`, `timed-out`, `limit-stopped` or `void` | intent-to-treat keeps every state except `void` |
 | `void_rule` | the protocol rule that set `void`, by its section; required when `run_state` is `void`, and empty otherwise | a void is never unexplained |
 | `host_class` | the role of the host the run used (for example, probe host), never its name | the fairness pins |
 | `outcome` | accepted count, scenario pass rate, canary hit | the primary's denominator |
 | `ledger`, `cost` | path and sha256 of each derived output | reproducibility |
-| `metrics` | open JSON, as the registry design keeps it | everything else |
-| `kos_finding` | the finding a run graduated into | the harvest link |
+| `metrics` | the schema's Dolt-layer field, unchanged: open JSON | everything else |
+| `kos_finding` | the schema's Dolt-layer field, unchanged: the finding a run graduated into | the harvest link |
 
 **What never enters the record:**
 - transcript content;
@@ -80,8 +80,8 @@ Proposed rules (`elem-run-lineage`):
 
   A run struck directly from canon has no edge. Its `source_repo` records the canon repository, as the marker's "empty = struck from canon" already says.
 - **L2. Grouping is not lineage.** The cohort (`run_id`), block and arm are columns. Two runs in one pair share a block, not an edge. Putting pairing into edges would make every comparison a graph query and blur the derivation the edge exists for.
-- **L3. `parents` is a list from day one,** so the store is a DAG as the registry design asks. The two consumers use at most one parent per run.
-- **L4. A seed is a run.** Every pilot and series run that starts from a seed lists it as `resumed-from`. A close's scope ("every close claims only the seed snapshot sha") becomes a lineage query: the claim holds for the runs descended from that seed. On the probe's S8-failure path, runs start from the brief instead and carry no lineage edge. Their scope is the test project sha in `protocol_sha`.
+- **L3. `parents` is a list from day one,** so the store is a DAG as the registry design asks. It is the effective-lineage view of L5's edge rows, not a second store. The two consumers use at most one parent per run.
+- **L4. A seed is a run.** Every pilot and series run that starts from a seed lists it as `resumed-from`. A close's scope ("every close claims only the seed snapshot sha") becomes a lineage query: the claim holds for the runs descended from that seed. On the probe's S8-failure path, runs start from the brief instead and carry no lineage edge. Their scope is the test project's start commit, which the record holds as the `locus` start commit.
 - **L5. Lineage is append-only.**
   - **An edge** is a row with its own identity: `edge_id`, `child`, `parent`, `kind`, `recorded_at` and `recorded_by`.
   - **A correction** is a row with `correction_id`, `supersedes` (an `edge_id`), an optional replacement edge, `reason`, `recorded_at` and `recorded_by`.

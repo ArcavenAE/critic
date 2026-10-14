@@ -12,19 +12,26 @@ content: |
 
   A run is one execution critic measures or indexes. That covers a factory
   session set on a test project (kind `trial`), a seed run, or a legion,
-  spike or fork repository (the marker kinds in docs/run-marker-schema.md).
-  The record extends the marker field set and does not replace it: every
-  marker field keeps its meaning and values. The marker's `run_id` stays the
-  cohort, `status` stays the lifecycle, and `parent` becomes the first
-  `derived-from` lineage edge.
+  spike or fork repository (the kinds in docs/run-marker-schema.md).
+  The record extends the schema's field set, marker and Dolt layers, and
+  does not replace it: every schema field and value keeps its meaning. The
+  marker's `run_id` stays the cohort, `parent` becomes the first
+  `derived-from` lineage edge, and the Dolt layer's `status`, `metrics` and
+  `kos_finding` are kept unchanged. One field gains a value: `kind` adds
+  `trial`, in the record only; a marker cannot carry it unless the schema
+  adds it.
 
-  Fields beyond the marker:
+  Fields beyond the schema:
+  - `id`: the run's unique, immutable key;
+  - `factory_ref`: the factory's pins (pack version, upstream commit, pack
+    digest);
   - `arm`: a free treatment label;
   - `block` and `order`: pair membership, beside the marker's `run_id`
     cohort;
   - `protocol_role`: smoke, live-test, seed, pilot, series, fidelity,
     reference, drill or defaults;
-  - `parents`: lineage, governed by elem-run-lineage;
+  - `parents`: the effective-lineage view of the edge rows, governed by
+    elem-run-lineage;
   - `protocol_sha` and `harness_build`;
   - `locus`: a repository or checkout, with start and end commits;
   - `sessions` and `transcript_roots`;
@@ -34,9 +41,7 @@ content: |
     void;
   - `host_class`: the role of the host, never its name;
   - `outcome`;
-  - `ledger` and `cost` references, by path and sha256;
-  - `metrics`, as open JSON;
-  - `kos_finding`.
+  - `ledger` and `cost` references, by path and sha256.
 
   Never in the record: transcript content, secret values or host names.
   Transcripts stay in the private runtime area (charter B2).
