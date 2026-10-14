@@ -13,20 +13,26 @@ content: |
   A run is one execution critic measures or indexes. That covers a factory
   session set on a test project (kind `trial`), a seed run, or a legion,
   spike or fork repository (the marker kinds in docs/run-marker-schema.md).
-  The record extends the marker field set and does not replace it.
+  The record extends the marker field set and does not replace it: every
+  marker field keeps its meaning and values. The marker's `run_id` stays the
+  cohort, `status` stays the lifecycle, and `parent` becomes the first
+  `derived-from` lineage edge.
 
   Fields beyond the marker:
   - `arm`: a free treatment label;
-  - `cohort`, `block` and `order`: series and pair membership;
-  - `protocol_role`: seed, pilot, series, fidelity, reference, drill or
-    defaults;
+  - `block` and `order`: pair membership, beside the marker's `run_id`
+    cohort;
+  - `protocol_role`: smoke, live-test, seed, pilot, series, fidelity,
+    reference, drill or defaults;
   - `parents`: lineage, governed by elem-run-lineage;
   - `protocol_sha` and `harness_build`;
   - `locus`: a repository or checkout, with start and end commits;
   - `sessions` and `transcript_roots`;
   - start and end times;
-  - `status`: started, completed, stalled, crashed, timed-out,
-    limit-stopped or void, where void is set only by a protocol rule;
+  - `run_state`: started, completed, stalled, crashed, timed-out,
+    limit-stopped or void, with `void_rule` naming the protocol rule that set
+    void;
+  - `host_class`: the role of the host, never its name;
   - `outcome`;
   - `ledger` and `cost` references, by path and sha256;
   - `metrics`, as open JSON;
