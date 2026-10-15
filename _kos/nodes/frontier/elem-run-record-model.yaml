@@ -53,8 +53,8 @@ content: |
   so registry sync is added later without a second model.
 
   Store: Dolt stays the index of record (charter B3), in a `critic`
-  database. Where that database lives is an open operator ruling (design
-  section 9, R2).
+  database on a Dolt server local to the probe host (operator ruling
+  2026-10-15, design section 9, R2).
 
   Valid until 2026-10-28, when the architect role re-checks it, or until R1
   is ruled, whichever comes first.

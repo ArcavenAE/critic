@@ -135,13 +135,8 @@ Component 4 also bears on an open filing question for the probe: whether its com
 
 ## 7. Store and language
 
-- **Store.** Charter B3 holds: Dolt is the index of record. The records and edges live in a `critic` database. The proposal puts it on the shared Dolt server, which is reachable from any fleet machine, so the probe host can write to it. Adding a database to that server changes shared state, so it is ruling R2. If that is declined, the fallback is a Dolt server local to the probe host, with the same schema. Tests run against a throwaway local Dolt either way.
-- **Language.** The charter leaves it undecided. The recommendation is Python under `uv`:
-  - critic's existing Phase 0 scripts are Python;
-  - the components are transcript parsing and statistics;
-  - the arena engine is a later, separate question.
-
-  This is ruling R3.
+- **Store.** Charter B3 holds: Dolt is the index of record. The records and edges live in a `critic` database on a Dolt server local to the probe host. The operator ruled this on 2026-10-15 (R2), against the recommendation of the shared Dolt server, so nothing is added to shared state. Tests run against a throwaway local Dolt.
+- **Language.** Rust. The operator ruled this on 2026-10-15 (R3), against the recommendation of Python under `uv`. Components 1 to 5 are built in Rust. The Phase 0 scripts under `skills/` are Python and stay as they are; this ruling does not ask for them to be ported.
 
 ## 8. What happens to hp96
 
@@ -152,11 +147,11 @@ Either way, the isolation check is recorded as already holding (section 2), with
 
 ## 9. Open rulings
 
-Each recommendation is valid until 2026-10-28; the architect role re-checks it then. Nothing here executes on silence.
+R2 and R3 are ruled. Each open recommendation is valid until 2026-10-28; the architect role re-checks it then. Nothing here executes on silence.
 
 | ruling | options | recommendation |
 |---|---|---|
 | R1. critic's first code | A. registry first; B. consumers first (section 5) | B |
-| R2. where the `critic` database lives | the shared Dolt server; or a Dolt server on the probe host | the shared server |
-| R3. language | Python under `uv`; Rust; Go | Python under `uv` |
+| R2. where the `critic` database lives | the shared Dolt server; or a Dolt server on the probe host | the shared server. **Ruled 2026-10-15: local, a Dolt server on the probe host** |
+| R3. language | Python under `uv`; Rust; Go | Python under `uv`. **Ruled 2026-10-15: Rust** |
 | R4. 17ki as the second consumer | keep, on this rig; close; re-scope to rc.22 against rc.25 | keep. If closed, consumer 2 drops and nothing else changes |
