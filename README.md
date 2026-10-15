@@ -32,7 +32,7 @@ the runtime environment.
 
 ## How it fits the platform
 
-- **Storage** — the shared Dolt service-plane holds the `legion` index table.
+- **Storage:** a Dolt server local to the probe host holds the `critic` database, which carries the `legion` locus of the run record (operator ruling 2026-10-15; see docs/design/critic-mvp.md, R2).
 - **Knowledge** — distilled findings graduate into `kos`, linked back to their
   registry row (never one kos node per run).
 - **Study/retrieval** — `flyloft` is the eventual surface for mining the

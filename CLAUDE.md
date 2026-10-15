@@ -18,7 +18,7 @@ runtime, same pattern as kos.
 
 ## Build / Run / Test
 
-No build yet (language undecided; see charter.md). Docs and skills only.
+No build yet. The language is Rust (operator ruling 2026-10-15, R3 in docs/design/critic-mvp.md). Docs and skills only.
 
 @.claude/rules/_index.md
 
