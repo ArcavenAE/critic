@@ -21,4 +21,4 @@ Provisioned on 2026-07-04 (ArcavenAE fleet signing review):
   `if: vars.SIGNING_ENABLED == 'true'` — flipping this variable is the
   single activation step.
 
-This repo is Python and currently ships no compiled binary, so there is nothing to codesign today. If distribution ever needs a signed macOS artifact (e.g. a PyInstaller binary or a .pkg of scripts), copy the org-standard release pipeline — flyloft's `release.yml` is the reference (build → sign-and-notarize → release → homebrew, gated as described above).
+This repo is Rust (operator ruling 2026-10-15, R3 in docs/design/critic-mvp.md) and currently ships no compiled binary, so there is nothing to codesign today. The Phase 0 scripts under `skills/` are Python and are not a signed artifact. If distribution ever needs a signed macOS artifact (a Rust binary, or a .pkg of scripts), copy the org-standard release pipeline: flyloft's `release.yml` is the reference (build, sign-and-notarize, release, homebrew, gated as described above).
