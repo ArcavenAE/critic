@@ -25,7 +25,8 @@ not yet built. See [charter.md](charter.md) for what's decided and what's open.
 
 critic is *developed in and published from* this repo. It is *run* somewhere
 else — initially inside the `aae-orc` orchestrator, where the `run/` working
-folder and the `legion` Dolt database are critic's runtime data. This mirrors
+folder and the `critic` Dolt database (local to the probe host, which carries the
+`legion` locus) are critic's runtime data. This mirrors
 how `kos` is developed in its own repo but used across many repos. Don't
 conflate the two: this repo holds source, CI, build, and installer; it is not
 the runtime environment.
