@@ -1,6 +1,6 @@
 # critic MVP: a run record first, then the ledger and the comparison
 
-**Status:** proposed. Nothing here is built or ratified.
+**Status:** R1 to R4 ruled (section 9). Nothing here is built.
 **Ticket:** aae-orc-hp96 (build critic MVP).
 **Graph:** seeds `_kos/nodes/frontier/elem-run-record-model.yaml` and `_kos/nodes/frontier/elem-run-lineage.yaml`.
 
@@ -17,7 +17,7 @@ The ticket (hp96, filed 2026-06-29) asks for a repository registry first:
 The two consumers named for it do not index repositories. They measure factory executions:
 
 1. **The vsdd-factory team probe** (marvel `_kos/probes/probe-vsdd-factory-as-marvel-team.md`, ArcavenAE/marvel#875). Arm A runs a pinned release in one session, and arm B runs each parallel branch as its own marvel session. It needs a cache ledger, a cost meter and a paired comparison (that brief's sections 9 to 11). Its ledger blocks the pilot.
-2. **The rc.22 against rc.24 side-by-side** (aae-orc-17ki). The same factory runs at two pack versions on one rig. It is the same shape as consumer 1, with the arm label being the pack version instead of the session topology.
+2. **The rc.22 against rc.25 side-by-side** (aae-orc-17ki, re-scoped from rc.24 on 2026-10-15). The same factory runs at two pack versions on one rig. It is the same shape as consumer 1, with the arm label being the pack version instead of the session topology.
 
 This design gives critic one record for "a run" that serves both shapes, a lineage rule, and a build order that delivers the consumers first. Registry sync becomes one locus type of that record, built when there is something to sync.
 
@@ -44,7 +44,7 @@ So run-sync would discover nothing today: no property to query, and no marker to
 | `id` | unique, immutable, lowercase, no slashes | the probe's run key |
 | `kind` | the schema's field: `legion`, `spike`, `fork` (the schema's kinds), plus **`trial`**, record only: an execution measured under a protocol | probe and 17ki runs are trials |
 | `factory`, `factory_ref` | `factory` is the schema's field; `factory_ref`, new, holds its pins: pack version, upstream commit, pack digest | arm A and arm B share these in the probe; 17ki's arms differ only here |
-| `arm` | a free label for the treatment | `one-session` and `per-branch`; or `rc.22` and `rc.24` |
+| `arm` | a free label for the treatment | `one-session` and `per-branch`; or `rc.22` and `rc.25` |
 | `run_id` | the marker's field, unchanged: it groups a batch or generation, the cohort. For a trial it names the series: protocol sha plus series number. The record's `id` names the run; `run_id` names its cohort | one `run_id` per probe series |
 | `block`, `order` | the pair index and position within it; empty outside a paired series | the strict pairs |
 | `protocol_role` | `smoke`, `live-test`, `seed`, `pilot`, `series`, `fidelity`, `reference`, `drill`, `defaults`, or empty | only `series` enters the comparison |
@@ -101,9 +101,11 @@ Two orders were weighed:
 | unblocks | nothing named | the probe's pilot (its ledger step) and both consumers' analysis |
 | registry sync | first | later, as the `legion` locus of the same record, when a marker or property exists |
 
-**Recommendation: B.** It is the operator's ruling, R1 below.
+**Ruled: B** (R1, 2026-10-30).
 
-## 6. Components (each a flat builder ticket; filing is the supervisor's)
+## 6. Components (each a flat builder ticket)
+
+**What builds now (operator ruling I-52, 2026-10-30, "keep both rulings"):** the 2026-10-15 ruling that the probe's ledger reader, cost meter and comparison are probe-local scripts stands beside R1 = B. So component 1 builds now. The probe's ledger and cost outputs enter the run record as files, by path and sha256 (the `ledger` and `cost` fields, section 3). Components 2 and 3 are tickets that wait for a consumer the probe's scripts do not serve. Component 4 waits until the probe shares its comparison script or a consumer outside the probe needs one. When any of them is built, the probe's tests and fixtures are its acceptance oracle.
 
 Each ships as a red/green draft PR on critic with its tests.
 
@@ -140,18 +142,17 @@ Component 4 also bears on an open filing question for the probe: whether its com
 
 ## 8. What happens to hp96
 
-- If B is ruled: hp96 stays the MVP slot, with a `REMAINING:` note naming components 1 to 4. Component 5 becomes its own flat ticket, carrying the original scope.
-- If A is ruled: hp96 stands as written, and components 2 to 4 become separate tickets for the consumers.
+B is ruled (R1). hp96 stays the MVP slot, with a `REMAINING:` note naming components 1 to 4. Component 5 becomes its own flat ticket, carrying the original scope.
 
 Either way, the isolation check is recorded as already holding (section 2), with a test to keep it.
 
 ## 9. Open rulings
 
-R2 and R3 are ruled. Each open recommendation is valid until 2026-10-28; the architect role re-checks it then. Nothing here executes on silence.
+All four are ruled. R2 and R3 were ruled on 2026-10-15, and R1 and R4 on 2026-10-30 (operator ruling I-35, relayed by director). On 2026-10-30 the operator also kept the probe-local ruling beside R1 (I-52), which section 6 applies.
 
 | ruling | options | recommendation |
 |---|---|---|
-| R1. critic's first code | A. registry first; B. consumers first (section 5) | B |
+| R1. critic's first code | A. registry first; B. consumers first (section 5) | B. **Ruled 2026-10-30: B** |
 | R2. where the `critic` database lives | the shared Dolt server; or a Dolt server on the probe host | the shared server. **Ruled 2026-10-15: local, a Dolt server on the probe host** |
 | R3. language | Python under `uv`; Rust; Go | Python under `uv`. **Ruled 2026-10-15: Rust** |
-| R4. 17ki as the second consumer | keep, on this rig; close; re-scope to rc.22 against rc.25 | keep. If closed, consumer 2 drops and nothing else changes |
+| R4. 17ki as the second consumer | keep, on this rig; close; re-scope to rc.22 against rc.25 | keep. **Ruled 2026-10-30: keep.** 17ki was already re-scoped to rc.22 against rc.25 on 2026-10-15 (card vsdd-c3-17ki), so it is kept as re-scoped |
