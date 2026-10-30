@@ -250,6 +250,85 @@ fn r_e_lineage_refuses_a_self_edge_a_missing_parent_and_a_cycle() {
 }
 
 #[test]
+fn a_replacement_is_an_edge_and_a_wrong_replacement_is_corrected_like_any_edge() {
+    use mysql::prelude::Queryable;
+    let env = Env::start();
+    for r in ["a", "c", "d"] {
+        env.register_ok(&format!("id: {r}\nkind: trial\n"));
+    }
+    env.register_ok("id: b\nkind: trial\nparent: a\n");
+    let first = env.store().effective_edges().unwrap()[0].edge_id.unwrap();
+    let json_edge = |out: &std::process::Output| -> (i64, i64) {
+        assert!(out.status.success(), "{}", text(out));
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        (
+            v["correction_id"].as_i64().unwrap(),
+            v["replacement_edge_id"]
+                .as_i64()
+                .expect("correct-edge prints the replacement's edge_id"),
+        )
+    };
+    let (_, r1) = json_edge(&env.critic(&[
+        "--json",
+        "run",
+        "correct-edge",
+        &first.to_string(),
+        "--reason",
+        "wrong parent",
+        "--replace-with",
+        "b,c,derived-from",
+    ]));
+    let effective = env.store().effective_edges().unwrap();
+    assert_eq!(effective.len(), 1);
+    assert_eq!(
+        effective[0].edge_id,
+        Some(r1),
+        "the replacement has an edge_id of its own"
+    );
+    let (_, r2) = json_edge(&env.critic(&[
+        "--json",
+        "run",
+        "correct-edge",
+        &r1.to_string(),
+        "--reason",
+        "still wrong",
+        "--replace-with",
+        "b,d,derived-from",
+    ]));
+    let effective = env.store().effective_edges().unwrap();
+    assert_eq!(
+        effective.len(),
+        1,
+        "only the second replacement is effective"
+    );
+    assert_eq!(
+        (effective[0].edge_id, effective[0].parent.as_str()),
+        (Some(r2), "d")
+    );
+    let mut st = env.store();
+    let n: Option<i64> = st
+        .raw()
+        .query_first("SELECT COUNT(*) FROM lineage_edges")
+        .unwrap();
+    let c: Option<i64> = st
+        .raw()
+        .query_first("SELECT COUNT(*) FROM lineage_corrections")
+        .unwrap();
+    assert_eq!(
+        (n, c),
+        (Some(3), Some(2)),
+        "all three edges and both corrections survive"
+    );
+    let again = env.critic(&["run", "correct-edge", &r1.to_string(), "--reason", "twice"]);
+    assert_eq!(
+        again.status.code(),
+        Some(1),
+        "an already superseded replacement is refused: {}",
+        text(&again)
+    );
+}
+
+#[test]
 fn r_f_the_store_refuses_a_direct_update_or_delete_on_either_lineage_table() {
     use mysql::prelude::Queryable;
     let env = Env::start();
