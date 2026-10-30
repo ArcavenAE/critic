@@ -1,7 +1,7 @@
 # critic arena policy: leakage and holdout
 
 **Status:** proposed. The rules are candidates (tag `H`) until the operator ratifies them. Nothing here is built.
-**Ruling it rests on:** operator ruling I-35 (2026-10-30), adopting the meta-harness dive's recommendation 2 as critic arena policy.
+**Ruling it rests on:** operator ruling I-35 (2026-10-30), which adopted two of the meta-harness dive's recommendations: 1, one run id joining source, score and raw trace, placed in critic's run record; and 2, leakage and holdout rules written as critic arena policy before any comparison. This document is the second. H1 restates the first as a condition on entering a comparison.
 **Fills:** arena question A2 (holdout management) in the orchestrator's `question-agent-arena-evaluation` node.
 **Written by:** the arcaven architect, 2026-10-30.
 
@@ -19,7 +19,7 @@ A comparison that lets the thing being tuned see the data that grades it reports
 ## 3. Rules
 
 - **H1. One id per run, raw traces kept.** Every run a comparison uses is a critic run record (component 1) with its source, score and raw trace pointers under one id. Summaries may be added; they never replace the raw trace. A run with no raw trace cannot enter a comparison.
-- **H2. Test data lives outside the proposer's reach.** Test tasks, their expected outputs and their scorers are stored where the proposer's workspace cannot read them: a path outside every proposer seat's working tree and sandbox, readable only by the scoring step. The comparison's protocol names that path, and critic refuses to register a test-split run whose task path sits under the proposer's working directory.
+- **H2. Test data lives outside the proposer's reach.** Test tasks, their expected outputs and their scorers are stored where the proposer's workspace cannot read them: a path outside every proposer seat's working tree and sandbox, readable only by the scoring step. The comparison's protocol names that path, and critic refuses to register a test-split run whose task path sits under the proposer's working directory. That refusal is the only part of H2 critic enforces. Whether the path is also outside every proposer's sandbox, and readable only by the scoring step, is a check on the protocol, made by the person who approves it; critic does not see sandboxes or file permissions and does not claim to.
 - **H3. Pick before looking.** The candidate to test is frozen before any test score exists: the protocol records the pick (the candidate's run id and source hash) with a time, and critic refuses a test-split run whose `started_at` is earlier than the frozen pick.
 - **H4. No untouched test set, no confirmatory claim.** A result with no test split, or whose test split was viewed before the pick, is labelled `exploratory` in critic's output and in any finding that quotes it. Only a result that meets H2 and H3 is labelled `confirmatory`.
 - **H5. Forbidden references.** Each task may list strings a candidate must not contain: its expected answer, a test file name, a scorer identifier. Before a candidate runs on the test split, critic scans the candidate's source (the files its run record names) for each string, and a hit voids the run (`run_state = void`, `void_rule = H5`).
