@@ -1,0 +1,25 @@
+[package]
+name = "critic-cli"
+description = "the critic binary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "critic"
+path = "src/main.rs"
+
+[dependencies]
+critic-core = { path = "../critic-core" }
+clap.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+serde_json.workspace = true
+mysql.workspace = true
+
+[lints]
+workspace = true
