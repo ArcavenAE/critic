@@ -31,6 +31,31 @@ how `kos` is developed in its own repo but used across many repos. Don't
 conflate the two: this repo holds source, CI, build, and installer; it is not
 the runtime environment.
 
+## The run record (`critic`)
+
+`critic` is a Rust workspace (`crates/critic-core`, `crates/critic-cli`). It gives every run one record and one id, so later components attach their outputs to it. Design: [docs/design/critic-mvp.md](docs/design/critic-mvp.md), component 1.
+
+```sh
+cargo test                        # store tests start a throwaway local Dolt server; they fail, not skip, without `dolt`
+critic db migrate                 # create the critic database and apply migrations/
+critic run register run.yaml      # validate and insert a run, its sessions and its edges
+critic run show <id>              # also: list, lineage, correct-edge, update
+critic doctor isolation --orc .   # exit 1 if a justfile recipe reads run/
+```
+
+Config is `$XDG_CONFIG_HOME/critic/config.toml` (or `--config`). Read by key; an unknown key is an error; there is no default server.
+
+```toml
+runtime_root = "/path/outside/any/checkout"   # transcripts, ledger and cost files live under it
+host_classes = ["probe-host"]                 # roles of hosts, never host names
+
+[dolt_url]
+host = "127.0.0.1"
+port = 3306
+user = "critic"
+password_env = "CRITIC_DOLT_PASSWORD"          # the variable's name; the password is never in the file
+```
+
 ## How it fits the platform
 
 - **Storage:** a Dolt server local to the probe host holds the `critic` database, which carries the `legion` locus of the run record (operator ruling 2026-10-15; see docs/design/critic-mvp.md, R2).

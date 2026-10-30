@@ -1,0 +1,50 @@
+# Format, lint and test the critic workspace. The store tests start a throwaway
+# Dolt server on a random localhost port, so the job installs a pinned dolt
+# (checked against its sha256) and the tests fail, never skip, without it.
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  DOLT_VERSION: "2.2.3"
+  DOLT_SHA256: ffafa7cc172cada5f77ca3fb96306545ddac44a111625f75f870306c7f197301
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned dolt
+        run: |
+          set -euo pipefail
+          curl -fsSL -o dolt.tgz "https://github.com/dolthub/dolt/releases/download/v${DOLT_VERSION}/dolt-linux-amd64.tar.gz"
+          echo "${DOLT_SHA256}  dolt.tgz" | sha256sum -c -
+          tar -xzf dolt.tgz
+          sudo install -m 0755 dolt-linux-amd64/bin/dolt /usr/local/bin/dolt
+          dolt version
+
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test

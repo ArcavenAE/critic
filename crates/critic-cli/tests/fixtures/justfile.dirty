@@ -1,0 +1,12 @@
+default:
+    echo hello
+
+status:
+    git status
+
+legion-list:
+    for d in run/*/; do echo $d; done
+    echo done
+
+sweep:
+    cat ./run/notes.txt
