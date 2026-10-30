@@ -105,7 +105,7 @@ Two orders were weighed:
 
 ## 6. Components (each a flat builder ticket)
 
-**What builds now (operator ruling I-52, 2026-10-30, "keep both rulings"):** the 2026-10-15 ruling that the probe's ledger reader, cost meter and comparison are probe-local scripts stands beside R1 = B. So component 1 builds now. The probe's ledger and cost outputs enter the run record as files, by path and sha256 (the `ledger` and `cost` fields, section 3). Components 2 and 3 are tickets that wait for a consumer the probe's scripts do not serve. Component 4 waits until the probe shares its comparison script or a consumer outside the probe needs one. When any of them is built, the probe's tests and fixtures are its acceptance oracle.
+**What builds now (operator ruling I-52, 2026-10-30, verbatim "keep both rulings"):** the two rulings kept are R1 = B and the 2026-10-15 card vsdd-c4-critic-first-code, whose answer was "Probe-local scripts only; no critic code yet". I-52 took the recommendation that critic builds components 1 and 4 now, with component 4 critic's comparison only if the probe agrees to share it. The probe's comparison script falls under the kept 2026-10-15 answer, so it is not shared, and component 1 is the one that builds now. The probe's ledger and cost outputs enter the run record as files, by path and sha256 (the `ledger` and `cost` fields, section 3). Components 2 and 3 are tickets that wait for a consumer the probe's scripts do not serve. Component 4 waits until the probe shares its comparison script or a consumer outside the probe needs one. When any of them is built, the probe's tests and fixtures are its acceptance oracle.
 
 Each ships as a red/green draft PR on critic with its tests.
 
@@ -144,7 +144,7 @@ Component 4 also bears on an open filing question for the probe: whether its com
 
 B is ruled (R1). hp96 stays the MVP slot, with a `REMAINING:` note naming components 1 to 4. Component 5 becomes its own flat ticket, carrying the original scope.
 
-Either way, the isolation check is recorded as already holding (section 2), with a test to keep it.
+The isolation check is recorded as already holding (section 2). Component 1 keeps it checkable with `critic doctor isolation`, run against the orchestrator's justfile, since critic's CI has no orchestrator checkout to test.
 
 ## 9. Open rulings
 
