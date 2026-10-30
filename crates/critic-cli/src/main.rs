@@ -116,9 +116,9 @@ enum RunCmd {
         #[arg(long)]
         with_corrections: bool,
     },
-    /// Insert a correction that supersedes an edge, with a reason and an optional replacement. The only way an edge changes.
+    /// Insert a correction that supersedes an edge, with a reason and an optional replacement edge (inserted with its own edge_id). The only way an edge changes.
     CorrectEdge {
-        /// The edge to supersede (its id is printed by `critic run show`; a replacement edge has none).
+        /// The edge to supersede (its id is printed by `critic run show` and by `correct-edge` for a replacement).
         edge_id: i64,
         /// Why the edge is wrong; not empty.
         #[arg(long)]
@@ -557,10 +557,16 @@ fn dispatch(cli: Cli) -> Result<i32> {
                         }
                         None => None,
                     };
-                    let cid = st.correct_edge(edge_id, &reason, repl, &recorded_by())?;
-                    emit(json_mode, &json!({"correction_id": cid}), || {
-                        format!("correction {cid} recorded")
-                    });
+                    let (cid, new_edge) =
+                        st.correct_edge(edge_id, &reason, repl, &recorded_by())?;
+                    emit(
+                        json_mode,
+                        &json!({"correction_id": cid, "replacement_edge_id": new_edge}),
+                        || match new_edge {
+                            Some(e) => format!("correction {cid} recorded; replacement edge {e}"),
+                            None => format!("correction {cid} recorded"),
+                        },
+                    );
                 }
                 RunCmd::Update(a) => {
                     update(&cfg, &mut st, &a)?;

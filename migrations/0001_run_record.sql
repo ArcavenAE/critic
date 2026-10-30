@@ -66,16 +66,14 @@ CREATE TABLE lineage_edges (
 CREATE TABLE lineage_corrections (
   correction_id BIGINT NOT NULL AUTO_INCREMENT,
   supersedes BIGINT NOT NULL,
-  repl_child VARCHAR(128) NULL,
-  repl_parent VARCHAR(128) NULL,
-  repl_kind VARCHAR(16) NULL,
+  replacement_edge_id BIGINT NULL,
   reason VARCHAR(1024) NOT NULL,
   recorded_at VARCHAR(40) NOT NULL,
   recorded_by VARCHAR(128) NOT NULL,
   PRIMARY KEY (correction_id),
   CONSTRAINT lineage_corrections_edge FOREIGN KEY (supersedes) REFERENCES lineage_edges (edge_id),
-  CONSTRAINT lineage_corrections_reason CHECK (reason <> ''),
-  CONSTRAINT lineage_corrections_repl CHECK ((repl_child IS NULL AND repl_parent IS NULL AND repl_kind IS NULL) OR (repl_child IS NOT NULL AND repl_parent IS NOT NULL AND repl_kind IN ('derived-from','resumed-from') AND repl_child <> repl_parent))
+  CONSTRAINT lineage_corrections_replacement FOREIGN KEY (replacement_edge_id) REFERENCES lineage_edges (edge_id),
+  CONSTRAINT lineage_corrections_reason CHECK (reason <> '')
 );
 -- Dolt triggers do not support SIGNAL, so the append-only rule is a guard table: an
 -- UPDATE or DELETE on either lineage table runs a trigger that inserts NULL into a
@@ -89,8 +87,4 @@ CREATE TRIGGER lineage_corrections_no_delete BEFORE DELETE ON lineage_correction
 CREATE VIEW effective_lineage AS
   SELECT e.edge_id AS edge_id, e.child AS child, e.parent AS parent, e.kind AS kind
     FROM lineage_edges e
-   WHERE NOT EXISTS (SELECT 1 FROM lineage_corrections c WHERE c.supersedes = e.edge_id)
-  UNION ALL
-  SELECT NULL AS edge_id, c.repl_child AS child, c.repl_parent AS parent, c.repl_kind AS kind
-    FROM lineage_corrections c
-   WHERE c.repl_child IS NOT NULL;
+   WHERE NOT EXISTS (SELECT 1 FROM lineage_corrections c WHERE c.supersedes = e.edge_id);

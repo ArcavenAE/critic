@@ -502,7 +502,11 @@ fn lineage_corrections_change_the_effective_view_and_keep_the_old_rows() {
         .raw()
         .query_first("SELECT COUNT(*) FROM lineage_edges")
         .unwrap();
-    assert_eq!(n, Some(1), "the superseded row is still in the table");
+    assert_eq!(
+        n,
+        Some(2),
+        "the superseded row is still in the table, beside its replacement"
+    );
     let again = env.critic(&[
         "run",
         "correct-edge",

@@ -71,13 +71,15 @@ pub trait Store {
     /// carries the superseded edges and their corrections, as JSON.
     fn effective_edges(&mut self) -> Result<Vec<Edge>>;
     fn corrections(&mut self) -> Result<Vec<Value>>;
+    /// Insert a correction and, with a replacement, the replacement as an ordinary edge,
+    /// in one transaction. Returns the correction id and the replacement's edge_id.
     fn correct_edge(
         &mut self,
         edge_id: i64,
         reason: &str,
         replacement: Option<Replacement>,
         by: &str,
-    ) -> Result<i64>;
+    ) -> Result<(i64, Option<i64>)>;
     fn update(&mut self, id: &str, update: &RunUpdate) -> Result<()>;
 }
 
@@ -442,8 +444,9 @@ impl Store for DoltStore {
 
     fn corrections(&mut self) -> Result<Vec<Value>> {
         let rows: Vec<mysql::Row> = self.conn.query(
-            "SELECT c.correction_id, c.supersedes, e.child, e.parent, e.kind, c.repl_child, c.repl_parent, c.repl_kind, c.reason, c.recorded_at, c.recorded_by \
-             FROM lineage_corrections c JOIN lineage_edges e ON e.edge_id = c.supersedes ORDER BY c.correction_id",
+            "SELECT c.correction_id, c.supersedes, e.child, e.parent, e.kind, c.replacement_edge_id, r.child AS repl_child, r.parent AS repl_parent, r.kind AS repl_kind, c.reason, c.recorded_at, c.recorded_by \
+             FROM lineage_corrections c JOIN lineage_edges e ON e.edge_id = c.supersedes \
+             LEFT JOIN lineage_edges r ON r.edge_id = c.replacement_edge_id ORDER BY c.correction_id",
         )?;
         Ok(rows
             .iter()
@@ -452,7 +455,7 @@ impl Store for DoltStore {
                 json!({
                     "correction_id": r.get::<Option<i64>, _>("correction_id").flatten(),
                     "supersedes": {"edge_id": r.get::<Option<i64>, _>("supersedes").flatten(), "child": g("child"), "parent": g("parent"), "kind": g("kind")},
-                    "replacement": if g("repl_child").is_null() { Value::Null } else { json!({"child": g("repl_child"), "parent": g("repl_parent"), "kind": g("repl_kind")}) },
+                    "replacement": if g("repl_child").is_null() { Value::Null } else { json!({"edge_id": r.get::<Option<i64>, _>("replacement_edge_id").flatten(), "child": g("repl_child"), "parent": g("repl_parent"), "kind": g("repl_kind")}) },
                     "reason": g("reason"), "recorded_at": g("recorded_at"), "recorded_by": g("recorded_by"),
                 })
             })
@@ -465,7 +468,7 @@ impl Store for DoltStore {
         reason: &str,
         replacement: Option<Replacement>,
         by: &str,
-    ) -> Result<i64> {
+    ) -> Result<(i64, Option<i64>)> {
         if reason.trim().is_empty() {
             return Err(Refusal::new("R-e", "reason", "a correction needs a reason").into());
         }
@@ -513,21 +516,26 @@ impl Store for DoltStore {
                 .into());
             }
         }
-        let (rc, rp, rk) = match &replacement {
-            Some(r) => (
-                Some(r.child.clone()),
-                Some(r.parent.clone()),
-                Some(r.kind.clone()),
-            ),
-            None => (None, None, None),
+        // A replacement is an ordinary edge with its own edge_id, inserted in the same
+        // transaction as the correction that names it.
+        let replacement_edge_id = match &replacement {
+            Some(r) => {
+                tx.exec_drop(
+                    "INSERT INTO lineage_edges (child, parent, kind, recorded_at, recorded_by) VALUES (?, ?, ?, ?, ?)",
+                    (&r.child, &r.parent, &r.kind, &now, by),
+                )?;
+                let eid: Option<i64> = tx.query_first("SELECT LAST_INSERT_ID()")?;
+                eid
+            }
+            None => None,
         };
         tx.exec_drop(
-            "INSERT INTO lineage_corrections (supersedes, repl_child, repl_parent, repl_kind, reason, recorded_at, recorded_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (edge_id, rc, rp, rk, reason, &now, by),
+            "INSERT INTO lineage_corrections (supersedes, replacement_edge_id, reason, recorded_at, recorded_by) VALUES (?, ?, ?, ?, ?)",
+            (edge_id, replacement_edge_id, reason, &now, by),
         )?;
         let id: Option<i64> = tx.query_first("SELECT LAST_INSERT_ID()")?;
         tx.commit()?;
-        Ok(id.unwrap_or(0))
+        Ok((id.unwrap_or(0), replacement_edge_id))
     }
 
     fn update(&mut self, id: &str, u: &RunUpdate) -> Result<()> {
