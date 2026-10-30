@@ -349,6 +349,14 @@ fn r_f_the_store_refuses_a_direct_update_or_delete_on_either_lineage_table() {
         .status
         .success());
     let mut st = env.store();
+    let kind_before: Option<String> = st
+        .raw()
+        .query_first("SELECT kind FROM lineage_edges")
+        .unwrap();
+    let reason_before: Option<String> = st
+        .raw()
+        .query_first("SELECT reason FROM lineage_corrections")
+        .unwrap();
     for sql in [
         "UPDATE lineage_edges SET kind = 'resumed-from'",
         "DELETE FROM lineage_edges",
@@ -370,6 +378,58 @@ fn r_f_the_store_refuses_a_direct_update_or_delete_on_either_lineage_table() {
         .query_first("SELECT COUNT(*) FROM lineage_corrections")
         .unwrap();
     assert_eq!((n, c), (Some(1), Some(1)), "every row survived");
+    let kind_after: Option<String> = st
+        .raw()
+        .query_first("SELECT kind FROM lineage_edges")
+        .unwrap();
+    let reason_after: Option<String> = st
+        .raw()
+        .query_first("SELECT reason FROM lineage_corrections")
+        .unwrap();
+    assert_eq!(
+        kind_after, kind_before,
+        "the refused UPDATE left kind as it was"
+    );
+    assert_eq!(
+        reason_after, reason_before,
+        "the refused UPDATE left reason as it was"
+    );
+}
+
+#[test]
+fn the_store_refuses_a_second_correction_of_the_same_edge() {
+    use mysql::prelude::Queryable;
+    let env = Env::start();
+    env.register_ok("id: a\nkind: trial\n");
+    env.register_ok("id: b\nkind: trial\nparent: a\n");
+    let edge = env.store().effective_edges().unwrap()[0].edge_id.unwrap();
+    assert!(env
+        .critic(&[
+            "run",
+            "correct-edge",
+            &edge.to_string(),
+            "--reason",
+            "first"
+        ])
+        .status
+        .success());
+    let mut st = env.store();
+    let err = st
+        .raw()
+        .query_drop(format!(
+            "INSERT INTO lineage_corrections (supersedes, reason, recorded_at, recorded_by) VALUES ({edge}, 'second', 't', 'x')"
+        ))
+        .expect_err("a second correction of one edge must fail in the store");
+    assert!(
+        err.to_string().to_lowercase().contains("duplicate")
+            || err.to_string().to_lowercase().contains("unique"),
+        "{err}"
+    );
+    let c: Option<i64> = st
+        .raw()
+        .query_first("SELECT COUNT(*) FROM lineage_corrections")
+        .unwrap();
+    assert_eq!(c, Some(1));
 }
 
 #[test]

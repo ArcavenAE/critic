@@ -72,6 +72,7 @@ CREATE TABLE lineage_corrections (
   recorded_by VARCHAR(128) NOT NULL,
   PRIMARY KEY (correction_id),
   CONSTRAINT lineage_corrections_edge FOREIGN KEY (supersedes) REFERENCES lineage_edges (edge_id),
+  CONSTRAINT lineage_corrections_once UNIQUE (supersedes),
   CONSTRAINT lineage_corrections_replacement FOREIGN KEY (replacement_edge_id) REFERENCES lineage_edges (edge_id),
   CONSTRAINT lineage_corrections_reason CHECK (reason <> '')
 );
