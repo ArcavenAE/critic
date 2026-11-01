@@ -12,7 +12,7 @@ These requirements came from playing critic by hand for the October 2026 run of 
 
 ## Transcript ledger (component 2)
 
-**C-04. Dedupe on a stated key, with a fixture.** When usage repeats across the content blocks of one reply, the ledger counts each request once, on one stated key. Where `message.id` and `requestId` can disagree, the ledger says which it uses. Where repeated copies of one message can carry different usage, it takes the last or largest copy, not the first. A fixture fails on a double count and on taking the first copy.
+**C-04. Dedupe on a stated key, with a fixture.** When usage repeats across the content blocks of one reply, the ledger counts each request once, on one stated key. Where `message.id` and `requestId` can disagree, the ledger says which it uses. Where repeated copies of one message can carry different usage, it takes the last or largest copy, not the first. A fixture fails on a double count and on taking the first copy. It takes that copy's usage whole, every token class from the same copy: the reference script in sim/tools keeps the largest output count of a repeated message but the first copy's input and cache counts, so it does not meet this yet.
 
 **C-05. Meter at write time.** When the harness removes older transcripts under its own retention, a meter that reads transcripts after the fact reads a floor. Per-request usage is recorded when it happens, outside that retention.
 
