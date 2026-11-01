@@ -14,6 +14,9 @@
 #   team           match = team                          -> goal
 #   path           match = regex on the cwd, home as ~    -> repo (applied before git)
 # Unmatched goal is "unmapped"; unmatched repo is "unknown". Both are reported as their own rows.
+# git runs in every cwd that no path rule claims, so the map's path rules must claim any root git
+# must not run in (quarantine and other read-only material). Git calls run with GIT_* cleared, so an
+# inherited GIT_DIR cannot redirect them; a git call that hangs past its timeout maps that cwd to unknown.
 import json,glob,os,re,collections,csv,sys
 from datetime import datetime
 out=sys.argv[1]; P=json.load(open(sys.argv[2])); CLUSTER=sys.argv[3]; MAPF=sys.argv[4]
@@ -84,8 +87,10 @@ def act(e,role):
     if role=='-': return 'operator direct or unnamed'
     return {'builder':'building','reviewer':'review','research-supervisor':'research','supervisor':'supervision and relay','architect':'design','author':'design','envoy':'triage','critic':'review'}.get(role,'other seat roles')
 _rc={}
+GITENV={k:v for k,v in os.environ.items() if not k.startswith('GIT_')}
 def git(d,*a):
-    r=subprocess.run(['git','--no-optional-locks','-c','core.fsmonitor=false','-C',d,*a],capture_output=True,timeout=20)
+    try: r=subprocess.run(['git','--no-optional-locks','-c','core.fsmonitor=false','-C',d,*a],capture_output=True,timeout=20,env=GITENV)
+    except subprocess.TimeoutExpired: return ''
     return r.stdout.decode('utf-8','replace').strip() if r.returncode==0 else ''
 def repo_of(cwd):
     if cwd in _rc: return _rc[cwd]
