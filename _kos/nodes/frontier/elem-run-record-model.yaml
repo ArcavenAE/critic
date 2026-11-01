@@ -58,6 +58,16 @@ content: |
 
   Valid until 2026-10-28, when the architect role re-checks it, or until R1
   is ruled, whichever comes first.
+
+  Re-checked 2026-11-01 by the harvest (ask I-86). Both conditions in the
+  validity line above have fired: the date passed, and R1 is ruled (B,
+  consumers first, 2026-10-30; critic#21, critic#24). Evidence: component 1
+  is merged (critic#23): `KINDS` in crates/critic-core/src/model.rs is
+  ["legion", "spike", "fork", "trial"], matching the added `trial` value,
+  and migrations/0001_run_record.sql holds the store. Not re-read: the
+  field list beyond `kind`. Confidence stays frontier because the node still
+  says "Not ratified". Re-check again by 2026-11-15, by the architect role.
+
 edges:
   - target: aae-orc::question-legion-run-registry
     type: derives
