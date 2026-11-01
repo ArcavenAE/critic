@@ -38,6 +38,16 @@ content: |
   queryable without either blurring the other.
 
   Valid until 2026-10-28, when the architect role re-checks it.
+
+  Re-checked 2026-11-01 by the harvest (ask I-86). The 2026-10-28 re-check
+  date has passed. Evidence: R1 to R4 are ruled (docs/design/critic-mvp.md
+  section 9, critic#21 and critic#24), and component 1 is merged (critic#23):
+  `EDGE_KINDS` in crates/critic-core/src/model.rs is
+  ["derived-from", "resumed-from"], the two kinds in L1. Not re-read: the
+  append-only edge rows of L5. Confidence stays frontier because the node
+  still says "Not ratified". Re-check again by 2026-11-15, by the architect
+  role.
+
 edges:
   - target: elem-run-record-model
     type: supports
