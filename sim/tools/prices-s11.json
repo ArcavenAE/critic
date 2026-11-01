@@ -1,0 +1,5 @@
+{"_source":"marvel _kos/probes/probe-vsdd-factory-as-marvel-team.md section 11, frozen 2026-10-14 (Opus 5.5, Sonnet 5.5); other models from claude-api skill 2.1.316 table cached 2026-10-06, marked non-s11","s11":["claude-opus-5-5","claude-sonnet-5-5"],
+ "claude-opus-5-5":{"in":4.0,"out":20.0,"cr":0.20,"cw5":5.0,"cw1":8.0},
+ "claude-sonnet-5-5":{"in":2.0,"out":10.0,"cr":0.10,"cw5":2.5,"cw1":4.0},
+ "claude-haiku-5-5":{"in":0.10,"out":0.50,"cr":0.01,"cw5":0.125,"cw1":0.20},
+ "claude-opus-4-8":{"in":5.0,"out":25.0,"cr":0.50,"cw5":6.25,"cw1":10.0}}
