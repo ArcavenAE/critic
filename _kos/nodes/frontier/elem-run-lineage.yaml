@@ -48,6 +48,23 @@ content: |
   still says "Not ratified". Re-check again by 2026-11-15, by the architect
   role.
 
+  Built 2026-11-01 (harvest, ask I-86), read from critic main at 7491749:
+  component 1 (critic#23) implements L5 in migrations/0001_run_record.sql and
+  crates/critic-core/src/store.rs.
+  - The replacement-edge rule: a correction row (`lineage_corrections`) holds
+    `supersedes` (an `edge_id`), an optional `replacement_edge_id`, a
+    non-empty `reason`, `recorded_at` and `recorded_by`. A replacement is an
+    ordinary edge row inserted in the same transaction as its correction
+    (`correct_edge`), so there is never a correction that names a replacement
+    that does not exist.
+  - An edge is corrected at most once (`supersedes` is unique).
+  - Append-only is enforced by guard triggers that make an UPDATE or DELETE on
+    either lineage table fail, and the effective lineage is the view
+    `effective_lineage`: every edge no correction supersedes.
+  Not re-read: how `critic run` records edges on the command line. Confidence
+  stays frontier: the node still reads "Not ratified", and promotion is a
+  human act.
+
 edges:
   - target: elem-run-record-model
     type: supports
