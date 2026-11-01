@@ -68,7 +68,19 @@ content: |
   field list beyond `kind`. Confidence stays frontier because the node still
   says "Not ratified". Re-check again by 2026-11-15, by the architect role.
 
+  Built 2026-11-01 (harvest, ask I-86), read from critic main at 7491749:
+  critic#23 ships the record, its Dolt store and `critic run` as component 1.
+  The store's column list includes `split`, which the arena evidence policy
+  (elem-arena-evidence-policy) adds to the record, beside `run_state`,
+  `void_rule`, `ledger_path` and `cost_path`. This is a bedrock candidate,
+  because the record is built and its first consumer's shape matches; moving
+  it is a human act, so it stays frontier here. Not re-read: the full field
+  list against the design table.
+
 edges:
+  - target: elem-arena-evidence-policy
+    type: supports
+    note: "the policy's H1 and the `split` field are conditions on this record"
   - target: aae-orc::question-legion-run-registry
     type: derives
     note: "extends the registry's marker and table field set; a legion repository becomes one locus of the run record"

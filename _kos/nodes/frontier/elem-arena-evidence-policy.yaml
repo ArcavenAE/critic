@@ -1,0 +1,54 @@
+id: elem-arena-evidence-policy
+type: element
+confidence: frontier
+title: "Arena evidence policy: leakage and holdout rules H1 to H8 for any critic comparison"
+tags:
+  - arena
+  - leakage
+  - holdout
+  - policy
+content: |
+  Proposed 2026-10-30 in docs/design/arena-evidence-policy.md (critic#22),
+  status proposed. Not ratified: the rules are candidates until the operator
+  ratifies them. Nothing in it is built except the `split` column on the run
+  record.
+
+  The rules, one line each:
+  - H1. One id per run, raw traces kept. A run with no raw trace cannot enter
+    a comparison.
+  - H2. Test data lives outside the proposer's reach. critic refuses to
+    register a test-split run whose task path is under the proposer's working
+    directory; the rest of H2 is a check made by whoever approves the protocol.
+  - H3. Pick before looking. The candidate is frozen, with a time, before any
+    test score exists; critic refuses an earlier test-split run.
+  - H4. No untouched test set, no confirmatory claim. Results are labelled
+    `exploratory` or `confirmatory`.
+  - H5. Forbidden references. A scan of the candidate's source for listed
+    strings voids the run (`run_state = void`, `void_rule = H5`).
+  - H6. Rotation. A test split serves one confirmatory comparison, then moves
+    to validation.
+  - H7. Authorship. Whoever authors the test tasks and scorers is not a
+    proposer in the comparisons that use them.
+  - H8. Every run counts. Analysis is as assigned; only a run voided by a
+    named rule leaves it.
+
+  What critic enforces is the `split` field, the H2 and H3 refusals, the H5
+  scan and the H4 label; which tasks form each split, who authors them and
+  whether a confirmatory result changes anything stay human acts. The
+  refusals land with component 4, the comparison, not with component 1.
+
+  Related, not derived: the orchestrator's arena evaluation question, whose
+  holdout management item (A2) this policy fills.
+
+  Valid until 2026-11-15, when the architect role re-checks it.
+edges:
+  - target: elem-run-record-model
+    type: supports
+    note: "H1 and the `split` field are conditions on the run record"
+  - target: aae-orc::question-agent-arena-evaluation
+    type: partially_resolves
+    note: "fills the arena question's holdout management item (A2) as a proposal"
+provenance:
+  created_by: agent
+  created_at: "2026-11-01"
+  discovered_from: docs/design/arena-evidence-policy.md
