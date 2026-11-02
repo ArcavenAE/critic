@@ -43,11 +43,17 @@
 # the price file. filer and maintainer seats are activities "filing" and "maintenance". signin_hash in attribution-meta.txt is
 # an unsalted 12-hex sha256 of the lowercased address: it tells two config dirs apart, and anyone who can
 # guess the address can confirm it, so it is a pseudonym and not safe to publish. Writes aggregates only, no transcript text.
+# Repo cache: the repo of a cwd that no path rule claims is read from git once and kept in a sidecar, so a rerun gives the
+# same repo after a worktree is removed. Location: $LEDGER_REPO_CACHE, else $XDG_CACHE_HOME/critic/ledger-repo-cache.csv,
+# else ~/.cache/critic/ledger-repo-cache.csv. Format: CSV with the header cwd,repo,first_seen (first_seen is the UTC time of the
+# run that first resolved the cwd). A cached cwd is reused without calling git; a cwd that was never resolved and is gone stays
+# "unknown" and is not cached. Delete the file to resolve everything again. The file holds directory paths, lives outside OUT_DIR,
+# is mode 600 in a 700 directory, and is never part of the output. Path-rule answers are not cached: they follow the map.
 # by-token-class.csv splits this host's list price by token class (input, cache write, cache read, output): requests is the
 # count of priced requests that carry tokens of that class, list_usd the tokens times the price the script already applies
 # (cache write is the 5 minute and the 1 hour tokens together). A request whose model has no price is in neither column.
 import json,glob,os,re,collections,csv,sys,gzip,hashlib
-from datetime import datetime
+from datetime import datetime,timezone
 out=sys.argv[1]; os.makedirs(out,exist_ok=True); P=json.load(open(sys.argv[2])); CLUSTER=sys.argv[3]; MAPF=sys.argv[4]
 root=os.path.expanduser(sys.argv[5] if len(sys.argv)>5 else '~/.claude/projects')
 LOGDIR=os.path.expanduser(sys.argv[6] if len(sys.argv)>6 else '~/.marvel/log')
@@ -161,6 +167,13 @@ def act(e,role,cls):
     if role=='-': return cls
     return {'builder':'building','reviewer':'review','research-supervisor':'research','supervisor':'supervision and relay','filer':'filing','maintainer':'maintenance','architect':'design','test-architect':'design','author':'design','envoy':'triage','critic':'review','reader':'research','analyst':'research','retrospector':'research','introspector':'research','writer':'design','editor':'design','worker':'building','fact-checker':'review','sweeper':'maintenance','researcher':'research','director':'supervision and relay','lead':'supervision and relay','screener':'review','panelist':'design'}.get(role,'other seat roles')
 _rc={}
+CACHEF=os.environ.get('LEDGER_REPO_CACHE') or os.path.join(os.environ.get('XDG_CACHE_HOME') or os.path.join(HOME,'.cache'),'critic','ledger-repo-cache.csv')
+RCACHE={}; RNEW={}
+try:
+    with open(CACHEF,newline='') as _fh:
+        for _r in csv.DictReader(_fh):
+            if _r.get('cwd') and _r.get('repo'): RCACHE[_r['cwd']]=(_r['repo'],_r.get('first_seen') or '')
+except Exception: RCACHE={}
 GITENV={k:v for k,v in os.environ.items() if not k.startswith('GIT_')}
 def git(d,*a):
     try: r=subprocess.run(['git','--no-optional-locks','-c','core.fsmonitor=false','-C',d,*a],capture_output=True,timeout=20,env=GITENV)
@@ -170,7 +183,8 @@ def repo_of(cwd):
     if cwd in _rc: return _rc[cwd]
     k=cwd.replace(HOME,'~',1) if cwd.startswith(HOME) else cwd
     v=next((val for rx,val in PATHR if rx.search(k)),None)
-    if v is None and cwd and os.path.isdir(cwd):
+    if v is None and cwd in RCACHE: v=RCACHE[cwd][0]
+    elif v is None and cwd and os.path.isdir(cwd):
         common=git(cwd,'rev-parse','--path-format=absolute','--git-common-dir')
         if common:
             top=common[:-5] if common.endswith('/.git') else common
@@ -178,6 +192,7 @@ def repo_of(cwd):
             if url:
                 u=re.sub(r'\.git$','',url.rstrip('/')); parts=re.split(r'[:/]',u); v='/'.join(parts[-2:])
             else: v=os.path.basename(top.rstrip('/'))
+            if v: RNEW[cwd]=v
     _rc[cwd]=v or 'unknown'; return _rc[cwd]
 def goal_of(a,repo,team):
     for key,src in ((a,'activity'),(a+'|'+repo,'activity_repo'),(team,'team_first'),(repo,'repo'),(team,'team')):
@@ -243,6 +258,20 @@ for e in msgs.values():
         x=sess[e['sid']]; x['requests']+=1; x['usd_micro']+=usd
         if a=='hub wait (bus polling)': x['hub_micro']+=usd
         d=e['ts'][:10]; m=sessmeta.setdefault(e['sid'],[d,d]); m[0]=min(m[0],d); m[1]=max(m[1],d)
+def save_repo_cache():
+    # Failure to write the sidecar never fails the run: the next run resolves again.
+    if not RNEW: return
+    try:
+        d=os.path.dirname(CACHEF); os.makedirs(d,mode=0o700,exist_ok=True)
+        now=datetime.now(timezone.utc).isoformat(timespec='seconds')
+        allr=dict(RCACHE); allr.update({c:(v,now) for c,v in RNEW.items() if c not in RCACHE})
+        tmpf=CACHEF+'.%d.tmp'%os.getpid()
+        fd=os.open(tmpf,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600)
+        with os.fdopen(fd,'w',newline='') as fh:
+            w=csv.writer(fh, lineterminator='\n'); w.writerow(['cwd','repo','first_seen']); w.writerows([c,v[0],v[1]] for c,v in sorted(allr.items()))
+        os.replace(tmpf,CACHEF)
+    except Exception as ex: print('repo cache not written: %s'%ex.__class__.__name__,file=sys.stderr)
+save_repo_cache()
 def write(name,keyf,hdr):
     t=collections.defaultdict(lambda:collections.Counter())
     for k,c in rows.items(): t[keyf(k)].update(c)

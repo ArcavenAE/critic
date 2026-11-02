@@ -41,7 +41,7 @@ def rec(sid, n, cwd='/srv/demo-fleet/a', tools=(), skill=None, ts='2026-10-05T10
                       'cache_creation_input_tokens': 0}}}
 
 
-def run(script, sessions, launch_lines=(), gz_lines=(), prices=None, mkout=True):
+def run(script, sessions, launch_lines=(), gz_lines=(), prices=None, mkout=True, cache=None):
     """sessions: list of (sid, agent_name or None, [records]). Returns {file: rows} from the output dir."""
     with tempfile.TemporaryDirectory() as d:
         proj = os.path.join(d, 'cfg', 'projects', 'p'); os.makedirs(proj)
@@ -65,9 +65,11 @@ def run(script, sessions, launch_lines=(), gz_lines=(), prices=None, mkout=True)
         out = os.path.join(d, 'out')
         if mkout:
             os.makedirs(out)
+        # the repo cache sidecar never lands in a real home: each run gets its own file unless the test shares one
+        env = dict(os.environ, LEDGER_REPO_CACHE=cache or os.path.join(d, 'repo-cache.csv'))
         r = subprocess.run([sys.executable, '-I', script, out, os.path.join(d, 'prices.json'), 'demo',
                             os.path.join(d, 'map.csv'), os.path.join(d, 'cfg', 'projects'), logd],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, env=env)
         assert r.returncode == 0, r.stderr
         res = {'_cr': []}
         for f in os.listdir(out):
@@ -396,6 +398,57 @@ class T(unittest.TestCase):
         self.assertNotEqual(got, self.TOK_WANT)
         got, _ = self.tok_rows(self.mutant("if n_tok>0: tk[nm]['requests']+=1", "tk[nm]['requests']+=1"))
         self.assertNotEqual(got, self.TOK_WANT)
+
+    # Repo cache: a cwd resolved from git is kept in a sidecar, so a rerun after the worktree is removed gives the same repo.
+    def worktree_fixture(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        g = ['git', '-c', 'user.name=demo', '-c', 'user.email=demo@example.test']
+        main = os.path.join(d, 'main-repo'); wt = os.path.join(d, 'wt1')
+        for cmd in (g + ['init', '-q', main], g + ['-C', main, 'commit', '-q', '--allow-empty', '-m', 'init'],
+                    g + ['-C', main, 'remote', 'add', 'origin', 'https://example.test/demo-org/demo-repo.git'],
+                    g + ['-C', main, 'worktree', 'add', '-q', wt, '-b', 'demo-branch']):
+            subprocess.run(cmd, check=True, capture_output=True)
+        def remove():
+            subprocess.run(g + ['-C', main, 'worktree', 'remove', '--force', wt], check=True, capture_output=True)
+        return d, wt, remove
+
+    def repos(self, script, wt, cache):
+        res = run(script, [('w1', None, [rec('w1', 300, cwd=wt)])], cache=cache)
+        return sorted((r['repo'], r['requests']) for r in res['by-repo.csv'])
+
+    def test_repo_survives_a_removed_worktree(self):
+        d, wt, remove = self.worktree_fixture()
+        cache = os.path.join(d, 'sidecar', 'cache.csv')
+        want = [('demo-org/demo-repo', '1')]
+        self.assertEqual(self.repos(SCRIPT, wt, cache), want)
+        remove()
+        self.assertEqual(self.repos(SCRIPT, wt, cache), want)
+        # without the sidecar the same input reads unknown: the defect the cache closes
+        self.assertEqual(self.repos(SCRIPT, wt, os.path.join(d, 'other.csv')), [('unknown', '1')])
+        with open(cache) as fh:
+            rows = list(csv.DictReader(fh))
+        self.assertEqual([(r['cwd'], r['repo']) for r in rows], [(wt, 'demo-org/demo-repo')])
+        self.assertRegex(rows[0]['first_seen'], r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+00:00$')
+        self.assertEqual(oct(os.stat(cache).st_mode & 0o777), '0o600')
+        self.assertEqual(oct(os.stat(os.path.dirname(cache)).st_mode & 0o777), '0o700')
+
+    def test_repo_cache_mutant_that_skips_the_cache_turns_red(self):
+        d, wt, remove = self.worktree_fixture()
+        cache = os.path.join(d, 'cache.csv')
+        m = self.mutant("if v is None and cwd in RCACHE: v=RCACHE[cwd][0]", "if False: pass")
+        self.assertEqual(self.repos(m, wt, cache), [('demo-org/demo-repo', '1')])
+        remove()
+        self.assertEqual(self.repos(m, wt, cache), [('unknown', '1')])
+
+    def test_unresolved_cwd_is_not_cached_and_the_sidecar_is_not_output(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        cache = os.path.join(d, 'cache.csv')
+        res = run(SCRIPT, [('g1', None, [rec('g1', 301, cwd='/srv/demo-gone/x')])], cache=cache)
+        self.assertEqual([r['repo'] for r in res['by-repo.csv']], ['unknown'])
+        self.assertFalse(os.path.exists(cache))
+        self.assertFalse(any('cache' in f for f in res))
 
     def test_price_files(self):
         def sha(f):
