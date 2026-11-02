@@ -41,7 +41,7 @@ def rec(sid, n, cwd='/srv/demo-fleet/a', tools=(), skill=None, ts='2026-10-05T10
                       'cache_creation_input_tokens': 0}}}
 
 
-def run(script, sessions, launch_lines=(), gz_lines=(), prices=None):
+def run(script, sessions, launch_lines=(), gz_lines=(), prices=None, mkout=True):
     """sessions: list of (sid, agent_name or None, [records]). Returns {file: rows} from the output dir."""
     with tempfile.TemporaryDirectory() as d:
         proj = os.path.join(d, 'cfg', 'projects', 'p'); os.makedirs(proj)
@@ -62,7 +62,9 @@ def run(script, sessions, launch_lines=(), gz_lines=(), prices=None):
             json.dump(PRICES if prices is None else prices, fh)
         with open(os.path.join(d, 'map.csv'), 'w', newline='') as fh:
             csv.writer(fh).writerows(MAP)
-        out = os.path.join(d, 'out'); os.makedirs(out)
+        out = os.path.join(d, 'out')
+        if mkout:
+            os.makedirs(out)
         r = subprocess.run([sys.executable, '-I', script, out, os.path.join(d, 'prices.json'), 'demo',
                             os.path.join(d, 'map.csv'), os.path.join(d, 'cfg', 'projects'), logd],
                            capture_output=True, text=True)
@@ -95,7 +97,7 @@ class T(unittest.TestCase):
     def test_role_table_mutant_turns_red(self):
         with open(SCRIPT) as fh:
             src = fh.read()
-        needle = "if sb.endswith('-'+h): sb=sb[:-len(h)-1]; break"
+        needle = "if sb.endswith('-'+h): sb=sb[:-len(h)-1]; harness=True; break"
         self.assertEqual(src.count(needle), 1)
         with tempfile.TemporaryDirectory() as d:
             m = os.path.join(d, 'mutant.py')
@@ -299,8 +301,23 @@ class T(unittest.TestCase):
         s = [('h1', 'acme-ax-reader-f1-g1-0', [rec('h1', 190)])]
         row = run(SCRIPT, s)['by-seat-label.csv'][0]
         self.assertEqual((row['team'], row['role']), ('acme-ax', 'reader'))
-        m = self.mutant("sb=re.sub(r'-f[0-9]+(f[0-9]+)*$','',b)", "sb=b")
+        m = self.mutant("t=re.sub(r'-f[0-9]+(f[0-9]+)*$','',sb); shard=(t!=sb); sb=t", "pass")
         self.assertNotIn('acme-ax-reader-f1', self.seat_rows(m, labels))
+
+    def test_a_missing_output_dir_is_created(self):
+        s = [('o1', 'acme-builder-g1-0', [rec('o1', 200)])]
+        self.assertEqual(run(SCRIPT, s, mkout=False)['by-seat-label.csv'][0]['label_base'], 'acme-builder')
+        m = self.mutant("os.makedirs(out,exist_ok=True); ", "")
+        with self.assertRaises(AssertionError):
+            run(m, s, mkout=False)
+
+    def test_harness_and_shard_tokens_strip_in_either_order(self):
+        labels = ['acme-ax-reader-f1-claude-g1-0', 'acme-ax-reader-claude-f6f7-g1-0', 'acme-ax-reader-g1-0']
+        got = self.seat_rows(SCRIPT, labels)
+        self.assertEqual(sorted(got), ['acme-ax-reader', 'acme-ax-reader-claude-f6f7', 'acme-ax-reader-f1-claude'])
+        self.assertTrue(all(v == ('agent-name', 'research') for v in got.values()))
+        m = self.mutant("for _ in (0,1):", "for _ in (0,):")
+        self.assertNotEqual(sorted(self.seat_rows(m, labels)), sorted(got))
 
     def test_rule_column(self):
         s = [('r1', None, [rec('r1', 110, '/srv/demo-own/notes')]),
