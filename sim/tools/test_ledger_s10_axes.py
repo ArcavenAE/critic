@@ -24,6 +24,8 @@ TABLE = [
     ('acme-reviewer-supervisor-g1-0', 'acme-reviewer', 'supervisor', 'supervision and relay'),
     ('widget-reviewer-g1-0', 'widget', 'reviewer', 'review'),
     ('acme-claude-reviewer-g1-0', 'acme-claude', 'reviewer', 'review'),
+    ('widget-test-architect-g1-0', 'widget', 'test-architect', 'design'),
+    ('widget-architect-g1-0', 'widget', 'architect', 'design'),
 ]
 
 
@@ -139,6 +141,27 @@ class T(unittest.TestCase):
         self.assertEqual(tot('daily-by-model.csv'), tot('axes-rows.csv'))
         self.assertIn('requests_none=5', res['attribution-meta.txt'])
         self.assertIn('requests_agent_name=1', res['attribution-meta.txt'])
+
+    def dirs(self, script, cwds):
+        s = [('d%d' % i, None, [rec('d%d' % i, 70 + i, c)]) for i, c in enumerate(cwds)]
+        return sorted(r['project_dir'] for r in run(script, s)['unattributed-sessions.csv'])
+
+    CWDS = ['/private/tmp/claude-1/scratchpad-9f2c/work', '/tmp/x/y', '/Users/demo-user/work/other-org/some-repo',
+            '/srv/demo-own/notes', '/srv/demo-orch/client-x/repo']
+
+    def test_project_dir_is_rolled_up_never_raw(self):
+        self.assertEqual(self.dirs(SCRIPT, self.CWDS), sorted(['temp', 'temp', 'home', 'own', 'demo-orch']))
+
+    def test_rollup_mutant_that_prints_raw_turns_red(self):
+        with open(SCRIPT) as fh:
+            src = fh.read()
+        needle = "_cc[sid]=(c,rollup(k,orch,own))"
+        self.assertEqual(src.count(needle), 1)
+        with tempfile.TemporaryDirectory() as d:
+            m = os.path.join(d, 'mutant.py')
+            with open(m, 'w') as fh:
+                fh.write(src.replace(needle, "_cc[sid]=(c,k)"))
+            self.assertNotEqual(self.dirs(m, self.CWDS), sorted(['temp', 'temp', 'home', 'own', 'demo-orch']))
 
     def test_signin_hash_is_lowercased_email_hash_and_no_text_leaks(self):
         res = run(SCRIPT, [('b1', None, [rec('b1', 1)])])

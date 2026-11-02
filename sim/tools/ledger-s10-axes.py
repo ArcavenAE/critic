@@ -28,7 +28,8 @@
 # launch-log or none. A session with no seat is split by rule, in this order, and nothing is classed as
 # operator work without a positive rule: own (kind own or own_skill), external orchestration (kind
 # orchestrator), else "no seat name (unattributed)". A harness token (-claude, -codex, -opencode, -crush,
-# -goose) ends a seat base before the role is matched. Writes aggregates only, no transcript text.
+# -goose) ends a seat base before the role is matched. unattributed-sessions.csv rolls each project dir up to
+# an orchestrator name, own, temp or home; it never prints a raw path. Writes aggregates only, no transcript text.
 import json,glob,os,re,collections,csv,sys,gzip,hashlib
 from datetime import datetime
 out=sys.argv[1]; P=json.load(open(sys.argv[2])); CLUSTER=sys.argv[3]; MAPF=sys.argv[4]
@@ -46,7 +47,7 @@ ORCHR=[(re.compile(m),v) for m,v in MAP['orchestrator']]
 GOAL={k:dict(MAP[k]) for k in ('activity','activity_repo','team_first','repo','team')}
 SEAT=re.compile(r'^([a-z0-9]+(?:-[a-z0-9]+)*?)-g(\d+)-(\d+)$')
 WAIT={'mcp__director__wait_for_message','mcp__director__inbox_summary'}
-ROLES=['research-supervisor','supervisor','builder','reviewer','architect','envoy','author','critic']
+ROLES=['research-supervisor','supervisor','builder','reviewer','test-architect','architect','envoy','author','critic']
 HARNESS=('claude','codex','opencode','crush','goose')
 LAUNCH=re.compile(r"session [^/\s]+/(\S+) exec: .*'--session-id' '([0-9a-fA-F-]{36})'")
 def H(x): return hashlib.sha256((x or '').encode()).hexdigest()[:12]
@@ -127,7 +128,7 @@ def act(e,role,cls):
     if e['side']: return 'subagent work'
     if e['tools'] and e['tools']<=WAIT: return 'hub wait (bus polling)'
     if role=='-': return cls
-    return {'builder':'building','reviewer':'review','research-supervisor':'research','supervisor':'supervision and relay','architect':'design','author':'design','envoy':'triage','critic':'review'}.get(role,'other seat roles')
+    return {'builder':'building','reviewer':'review','research-supervisor':'research','supervisor':'supervision and relay','architect':'design','test-architect':'design','author':'design','envoy':'triage','critic':'review'}.get(role,'other seat roles')
 _rc={}
 GITENV={k:v for k,v in os.environ.items() if not k.startswith('GIT_')}
 def git(d,*a):
@@ -158,15 +159,23 @@ for e in msgs.values():
     if e['model']=='<synthetic>': continue
     if e['sid'] not in first or e['ts']<first[e['sid']][0]: first[e['sid']]=(e['ts'],e['cwd'])
 _cc={}
+def rollup(k,orch,own):
+    # A project dir is never printed raw: an orchestrator rule names it, an own rule says 'own', a temp or
+    # scratch path says 'temp', anything else says 'home'.
+    if orch is not None: return orch
+    if own: return 'own'
+    if re.match(r'^(/tmp/|/private/tmp/|/var/folders/|/private/var/folders/)',k) or 'scratchpad' in k: return 'temp'
+    return 'home'
 def uclass(sid):
     # class and rolled-up project dir of a session with no seat; one answer per session
     if sid in _cc: return _cc[sid]
     k=tilde(first.get(sid,('',''))[1])
     orch=next((v for rx,v in ORCHR if rx.search(k)),None)
-    if any(rx.search(k) for rx in OWNR) or (skills.get(sid,set())&OWNSKILL): c=C_OWN
+    own=any(rx.search(k) for rx in OWNR)
+    if own or (skills.get(sid,set())&OWNSKILL): c=C_OWN
     elif orch is not None: c=C_ORCH
     else: c=C_NONE
-    _cc[sid]=(c,orch if orch is not None else k); return _cc[sid]
+    _cc[sid]=(c,rollup(k,orch,own)); return _cc[sid]
 rows=collections.defaultdict(lambda:collections.Counter())
 seatrows=collections.defaultdict(lambda:collections.Counter())
 daily=collections.defaultdict(lambda:collections.Counter())
