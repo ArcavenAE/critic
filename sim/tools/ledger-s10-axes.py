@@ -43,6 +43,9 @@
 # the price file. filer and maintainer seats are activities "filing" and "maintenance". signin_hash in attribution-meta.txt is
 # an unsalted 12-hex sha256 of the lowercased address: it tells two config dirs apart, and anyone who can
 # guess the address can confirm it, so it is a pseudonym and not safe to publish. Writes aggregates only, no transcript text.
+# by-token-class.csv splits this host's list price by token class (input, cache write, cache read, output): requests is the
+# count of priced requests that carry tokens of that class, list_usd the tokens times the price the script already applies
+# (cache write is the 5 minute and the 1 hour tokens together). A request whose model has no price is in neither column.
 import json,glob,os,re,collections,csv,sys,gzip,hashlib
 from datetime import datetime
 out=sys.argv[1]; os.makedirs(out,exist_ok=True); P=json.load(open(sys.argv[2])); CLUSTER=sys.argv[3]; MAPF=sys.argv[4]
@@ -217,6 +220,8 @@ seatrows=collections.defaultdict(lambda:collections.Counter())
 daily=collections.defaultdict(lambda:collections.Counter())
 sess=collections.defaultdict(lambda:collections.Counter()); sessmeta={}
 bymethod=collections.Counter()
+TOKEN_CLASSES=('input','cache write','cache read','output')
+tk=collections.defaultdict(lambda:collections.Counter())
 for e in msgs.values():
     if e['model']=='<synthetic>': continue
     lab,team,role,method,base=seat(e['sid'])
@@ -227,7 +232,12 @@ for e in msgs.values():
     c=rows[k]; c['requests']+=1; bymethod[method]+=1
     sk=(cls if cls else base,method,team,role,a); sc=seatrows[sk]; sc['requests']+=1
     dc=daily[(e['ts'][:10],e['model'])]; dc['requests']+=1
-    if p: c['usd_micro']+=usd; sc['usd_micro']+=usd; dc['usd_micro']+=usd
+    if p:
+        c['usd_micro']+=usd; sc['usd_micro']+=usd; dc['usd_micro']+=usd
+        for nm,n_tok,cost in (('input',e['in'],e['in']*p['in']),('cache write',e['cw5v']+e['cw1'],e['cw5v']*p['cw5']+e['cw1']*p['cw1']),
+                              ('cache read',e['cr'],e['cr']*p['cr']),('output',e['out'],e['out']*p['out'])):
+            if n_tok>0: tk[nm]['requests']+=1
+            tk[nm]['usd_micro']+=cost
     else: c['unpriced']+=1; sc['unpriced']+=1; dc['unpriced']+=1
     if cls:
         x=sess[e['sid']]; x['requests']+=1; x['usd_micro']+=usd
@@ -251,6 +261,8 @@ wr('by-seat-label.csv',['cluster','label_base','method','team','role','activity'
 wr('unattributed-sessions.csv',['cluster','session_hash','class','project_dir','rule','director_rule','first_day','last_day','requests','list_usd','hub_wait_usd'],
    [[CLUSTER,H(sid),uclass(sid)[0],uclass(sid)[1],uclass(sid)[2],uclass(sid)[3],sessmeta[sid][0],sessmeta[sid][1],c['requests'],round(c['usd_micro']/1e6,2),round(c['hub_micro']/1e6,2)]
     for sid,c in sorted(sess.items(),key=lambda kc:-kc[1]['usd_micro'])])
+wr('by-token-class.csv',['cluster','token_class','requests','list_usd'],
+   [[CLUSTER,nm,tk[nm]['requests'],round(tk[nm]['usd_micro']/1e6,2)] for nm in TOKEN_CLASSES])
 wr('daily-by-model.csv',['cluster','day','model','requests','list_usd','unpriced'],
    [[CLUSTER,d,m,c['requests'],round(c['usd_micro']/1e6,2),c['unpriced']] for (d,m),c in sorted(daily.items())])
 def signin():
