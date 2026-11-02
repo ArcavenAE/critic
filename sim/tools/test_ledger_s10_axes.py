@@ -11,7 +11,6 @@ PRICES = {MODEL: {'in': 10000, 'cw5': 10000, 'cw1': 10000, 'cr': 10000, 'out': 1
 MAP = [('kind', 'match', 'value', 'note'),
        ('own', '^/srv/demo-own/', 'vault', ''),
        ('own_skill', 'demo-coach', 'coach', ''),
-       ('named', '^demo-director$', 'standing session', ''),
        ('orchestrator', '^/srv/demo-orch/', 'demo-orch', ''),
        ('own', '^/srv/demo-both/', 'both-path', ''),
        ('orchestrator', '^/srv/demo-both/', 'demo-orch', '')]
@@ -163,12 +162,12 @@ class T(unittest.TestCase):
     def test_rollup_mutant_that_prints_raw_turns_red(self):
         with open(SCRIPT) as fh:
             src = fh.read()
-        needle = "_cc[sid]=(c,rollup(k,orch,own),rule if c==C_OWN else '')"
+        needle = "_cc[sid]=(c,rollup(k,orch,own),"
         self.assertEqual(src.count(needle), 1)
         with tempfile.TemporaryDirectory() as d:
             m = os.path.join(d, 'mutant.py')
             with open(m, 'w') as fh:
-                fh.write(src.replace(needle, "_cc[sid]=(c,k,rule if c==C_OWN else '')"))
+                fh.write(src.replace(needle, "_cc[sid]=(c,k,"))
             self.assertNotEqual(self.dirs(m, self.CWDS), self.WANT)
 
     def mutant(self, old, new, count=1):
@@ -205,22 +204,53 @@ class T(unittest.TestCase):
         self.assertNotIn('example.test', json.dumps(res))
 
 
-    def test_not_a_seat_method_and_named_sessions(self):
+    def test_not_a_seat_method_prints_no_name(self):
         s = [('n1', 'demo-director', [rec('n1', 100, '/srv/demo-orch/x')]),
              ('n2', 'demo-other-thing', [rec('n2', 101, '/srv/demo-orch/x')])]
         res = run(SCRIPT, s)
         self.assertIn('requests_agent_name_not_a_seat=2', res['attribution-meta.txt'])
         self.assertIn('requests_agent_name=0', res['attribution-meta.txt'])
         self.assertEqual({r['method'] for r in res['by-seat-label.csv']}, {'agent-name (not a seat)'})
-        cls = {r['agent_name']: r['class'] for r in res['named-sessions.csv']}
-        self.assertEqual(cls, {'demo-director': 'standing session',
-                               'demo-other-thing': 'external orchestration (outside marvel)'})
-        self.assertEqual(res['named-sessions.csv'][0]['sessions'], '1')
+        self.assertNotIn('named-sessions.csv', res)
+        self.assertNotIn('demo-director', json.dumps(res))
+        self.assertNotIn('demo-other-thing', json.dumps(res))
         m = self.mutant("'agent-name (not a seat)' if method=='agent-name' else method", "method")
         self.assertNotIn('requests_agent_name_not_a_seat=2', run(m, s)['attribution-meta.txt'])
-        m = self.mutant("    elif nm is not None: c=nm\n", "")
-        got = {r['agent_name']: r['class'] for r in run(m, s)['named-sessions.csv']}
-        self.assertNotEqual(got, cls)
+
+    DIR = 'director sessions (coordination)'
+    ORCH = 'external orchestration (outside marvel)'
+
+    def director_classes(self, script):
+        mcp = 'mcp__director__send_message'
+        s = [('d1', None, [rec('d1', 150, '/srv/demo-orch/x', skill='director')]),
+             ('d2', None, [rec('d2', 151, '/srv/demo-orch/x', tools=[mcp, mcp, 'Bash'])]),
+             ('d3', None, [rec('d3', 152, '/srv/demo-orch/x', tools=[mcp, 'Bash', 'Read'])]),
+             ('d4', None, [rec('d4', 153, '/srv/demo-orch/x', skill='demo-other-skill')]),
+             ('d5', None, [rec('d5', 154, '/srv/demo-orch/x', skill='director', tools=[mcp, mcp])]),
+             ('d6', None, [rec('d6', 155, '/srv/demo-fleet/z', skill='director')]),
+             ('d7', None, [rec('d7', 156, '/srv/demo-orch/x', tools=[mcp, 'Bash'])])]
+        h = lambda x: hashlib.sha256(x.encode()).hexdigest()[:12]
+        rows = {r['session_hash']: (r['class'], r['director_rule']) for r in run(script, s)['unattributed-sessions.csv']}
+        want = {h('d1'): (self.DIR, 'skill'), h('d2'): (self.DIR, 'mcp-majority'), h('d3'): (self.ORCH, ''),
+                h('d4'): (self.ORCH, ''), h('d5'): (self.DIR, 'skill+mcp-majority'),
+                h('d6'): ('no seat name (unattributed)', ''), h('d7'): (self.ORCH, '')}
+        return rows, want
+
+    def test_director_sessions_are_classed_by_tool_calls(self):
+        got, want = self.director_classes(SCRIPT)
+        self.assertEqual(got, want)
+
+    def test_director_class_mutants_turn_red(self):
+        old = "    elif orch is not None: c=C_DIR if dr else C_ORCH\n"
+        for new in ("    elif orch is not None: c=C_ORCH\n",
+                    "    elif orch is not None: c=C_DIR\n"):
+            got, want = self.director_classes(self.mutant(old, new))
+            self.assertNotEqual(got, want)
+        for a, b in (("'director' in skills.get(sid,set())", "False"),
+                     ("2*tc['director']>tc['n']", "2*tc['director']>=tc['n']"),
+                     ("bool(tc['n']) and 2*tc['director']>tc['n']", "False")):
+            got, want = self.director_classes(self.mutant(a, b))
+            self.assertNotEqual(got, want)
 
     def test_rule_column(self):
         s = [('r1', None, [rec('r1', 110, '/srv/demo-own/notes')]),

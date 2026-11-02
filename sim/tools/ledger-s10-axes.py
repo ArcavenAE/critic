@@ -17,8 +17,6 @@
 #                                                           name, shown in the `rule` column of unattributed-sessions.csv
 #   own_skill      match = skill name                      -> operator own work (outside fleet); value = the rule's name,
 #                                                           joined to a matching own rule's name with "+"
-#   named          match = regex on the agent name        -> value = a class for a session whose agent-name is not a seat
-#                                                           label (used instead of external orchestration; own rules win)
 #   orchestrator   match = regex on the cwd, home as ~    -> external orchestration (outside marvel); value = the
 #                                                           orchestrator name the project dir is rolled up to
 # Unmatched goal is "unmapped"; unmatched repo is "unknown". Both are reported as their own rows.
@@ -35,8 +33,11 @@
 # -goose) ends a seat base before the role is matched. unattributed-sessions.csv rolls each project dir up to
 # an orchestrator name, own, temp or home; it never prints a raw path. Every CSV ends its lines with a bare
 # newline, not the csv module's CRLF default. A session whose agent-name is not a seat
-# label has method "agent-name (not a seat)" and is listed in named-sessions.csv (agent name, class, sessions,
-# requests, list_usd). A model id with a trailing -YYYYMMDD date is priced at its undated id when only that is in
+# label has method "agent-name (not a seat)"; no output carries an agent name. A session that would otherwise be
+# external orchestration is "director sessions (coordination)" when it calls the Skill tool with skill "director"
+# at least once, or more than half of its tool calls start with mcp__director__; the director_rule column of
+# unattributed-sessions.csv says which (skill, mcp-majority, or both joined by "+"). Reported beside external
+# orchestration and supervision and relay; no agent name is read for it. A model id with a trailing -YYYYMMDD date is priced at its undated id when only that is in
 # the price file. filer and maintainer seats are activities "filing" and "maintenance". signin_hash in attribution-meta.txt is
 # an unsalted 12-hex sha256 of the lowercased address: it tells two config dirs apart, and anyone who can
 # guess the address can confirm it, so it is a pseudonym and not safe to publish. Writes aggregates only, no transcript text.
@@ -53,7 +54,6 @@ for row in csv.DictReader(open(MAPF)):
 PATHR=[(re.compile(m),v) for m,v in MAP['path']]
 OWNR=[(re.compile(m),v) for m,v in MAP['own']]
 OWNSKILL=dict(MAP['own_skill'])
-NAMEDR=[(re.compile(m),v) for m,v in MAP['named']]
 ORCHR=[(re.compile(m),v) for m,v in MAP['orchestrator']]
 GOAL={k:dict(MAP[k]) for k in ('activity','activity_repo','team_first','repo','team')}
 SEAT=re.compile(r'^([a-z0-9]+(?:-[a-z0-9]+)*?)-g(\d+)-(\d+)$')
@@ -82,7 +82,7 @@ for lf in sorted(glob.glob(LOGDIR+'/daemon.log*')):
                 m=LAUNCH.search(line)
                 if m: launch[m.group(2).lower()]=m.group(1)
     except Exception: continue
-names={}; msgs={}; rid_n=set(); recs=0; skills=collections.defaultdict(set)
+names={}; msgs={}; rid_n=set(); recs=0; skills=collections.defaultdict(set); toolcalls=collections.defaultdict(collections.Counter)
 for f in glob.glob(root+'/**/*.jsonl',recursive=True):
     sub='/subagents/' in f
     with open(f,'rb') as fh:
@@ -101,6 +101,10 @@ for f in glob.glob(root+'/**/*.jsonl',recursive=True):
                 if isinstance(b,dict) and b.get('type')=='tool_use' and b.get('name')=='Skill' and isinstance(b.get('input'),dict) and b['input'].get('skill'): skills[r.get('sessionId')].add(str(b['input']['skill']))
             e=msgs.get(mid)
             if e is None:
+                for b in (m.get('content') or []):
+                    if isinstance(b,dict) and b.get('type')=='tool_use':
+                        toolcalls[r.get('sessionId')]['n']+=1
+                        if str(b.get('name') or '').startswith('mcp__director__'): toolcalls[r.get('sessionId')]['director']+=1
                 e=msgs[mid]={'cwd':r.get('cwd') or '','ts':ts,'model':m.get('model'),'sid':r.get('sessionId'),'stream':f,'side':bool(r.get('isSidechain')) or sub,
                   'in':u.get('input_tokens') or 0,'cr':u.get('cache_read_input_tokens') or 0,'cw':u.get('cache_creation_input_tokens') or 0,
                   'cw5':cc.get('ephemeral_5m_input_tokens'),'cw1':cc.get('ephemeral_1h_input_tokens') or 0,'out':u.get('output_tokens') or 0,
@@ -163,7 +167,7 @@ def goal_of(a,repo,team):
     for key,src in ((a,'activity'),(a+'|'+repo,'activity_repo'),(team,'team_first'),(repo,'repo'),(team,'team')):
         if key in GOAL[src]: return GOAL[src][key]
     return 'unmapped'
-C_OWN='operator own work (outside fleet)'; C_ORCH='external orchestration (outside marvel)'; C_NONE='no seat name (unattributed)'
+C_OWN='operator own work (outside fleet)'; C_ORCH='external orchestration (outside marvel)'; C_DIR='director sessions (coordination)'; C_NONE='no seat name (unattributed)'
 def tilde(cwd): return cwd.replace(HOME,'~',1) if cwd.startswith(HOME) else cwd
 first={}
 for e in msgs.values():
@@ -188,17 +192,17 @@ def uclass(sid):
     prules=[v for rx,v in OWNR if rx.search(k)]; own=bool(prules)
     srules=[OWNSKILL[x] for x in sorted(skills.get(sid,set())&set(OWNSKILL))]
     rule='+'.join(dict.fromkeys(prules+srules))
-    nm=next((v for rx,v in NAMEDR if rx.search(names.get(sid) or '')),None)
+    tc=toolcalls[sid]
+    dr=[x for x,hit in (('skill','director' in skills.get(sid,set())),('mcp-majority',bool(tc['n']) and 2*tc['director']>tc['n'])) if hit]
     if own or srules: c=C_OWN
-    elif nm is not None: c=nm
-    elif orch is not None: c=C_ORCH
+    elif orch is not None: c=C_DIR if dr else C_ORCH
     else: c=C_NONE
-    _cc[sid]=(c,rollup(k,orch,own),rule if c==C_OWN else ''); return _cc[sid]
+    _cc[sid]=(c,rollup(k,orch,own),rule if c==C_OWN else '','+'.join(dr) if c==C_DIR else ''); return _cc[sid]
 rows=collections.defaultdict(lambda:collections.Counter())
 seatrows=collections.defaultdict(lambda:collections.Counter())
 daily=collections.defaultdict(lambda:collections.Counter())
 sess=collections.defaultdict(lambda:collections.Counter()); sessmeta={}
-bymethod=collections.Counter(); named=collections.defaultdict(lambda:collections.Counter()); namedsids=collections.defaultdict(set)
+bymethod=collections.Counter()
 for e in msgs.values():
     if e['model']=='<synthetic>': continue
     lab,team,role,method,base=seat(e['sid'])
@@ -211,9 +215,6 @@ for e in msgs.values():
     dc=daily[(e['ts'][:10],e['model'])]; dc['requests']+=1
     if p: c['usd_micro']+=usd; sc['usd_micro']+=usd; dc['usd_micro']+=usd
     else: c['unpriced']+=1; sc['unpriced']+=1; dc['unpriced']+=1
-    if method=='agent-name (not a seat)':
-        nk=(names[e['sid']],cls); named[nk]['requests']+=1; namedsids[nk].add(e['sid'])
-        if p: named[nk]['usd_micro']+=usd
     if cls:
         x=sess[e['sid']]; x['requests']+=1; x['usd_micro']+=usd
         if a=='hub wait (bus polling)': x['hub_micro']+=usd
@@ -233,11 +234,9 @@ def wr(name,hdr,data):
         w=csv.writer(fh,lineterminator='\n'); w.writerow(hdr); w.writerows(data)
 wr('by-seat-label.csv',['cluster','label_base','method','team','role','activity','requests','unpriced','list_usd'],
    [[CLUSTER,*k,c['requests'],c['unpriced'],round(c['usd_micro']/1e6,2)] for k,c in sorted(seatrows.items(),key=lambda kc:-kc[1]['usd_micro'])])
-wr('unattributed-sessions.csv',['cluster','session_hash','class','project_dir','rule','first_day','last_day','requests','list_usd','hub_wait_usd'],
-   [[CLUSTER,H(sid),uclass(sid)[0],uclass(sid)[1],uclass(sid)[2],sessmeta[sid][0],sessmeta[sid][1],c['requests'],round(c['usd_micro']/1e6,2),round(c['hub_micro']/1e6,2)]
+wr('unattributed-sessions.csv',['cluster','session_hash','class','project_dir','rule','director_rule','first_day','last_day','requests','list_usd','hub_wait_usd'],
+   [[CLUSTER,H(sid),uclass(sid)[0],uclass(sid)[1],uclass(sid)[2],uclass(sid)[3],sessmeta[sid][0],sessmeta[sid][1],c['requests'],round(c['usd_micro']/1e6,2),round(c['hub_micro']/1e6,2)]
     for sid,c in sorted(sess.items(),key=lambda kc:-kc[1]['usd_micro'])])
-wr('named-sessions.csv',['cluster','agent_name','class','sessions','requests','list_usd'],
-   [[CLUSTER,nk[0],nk[1],len(namedsids[nk]),c['requests'],round(c['usd_micro']/1e6,2)] for nk,c in sorted(named.items(),key=lambda kc:-kc[1]['usd_micro'])])
 wr('daily-by-model.csv',['cluster','day','model','requests','list_usd','unpriced'],
    [[CLUSTER,d,m,c['requests'],round(c['usd_micro']/1e6,2),c['unpriced']] for (d,m),c in sorted(daily.items())])
 def signin():
