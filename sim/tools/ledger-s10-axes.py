@@ -43,11 +43,24 @@
 # the price file. filer and maintainer seats are activities "filing" and "maintenance". signin_hash in attribution-meta.txt is
 # an unsalted 12-hex sha256 of the lowercased address: it tells two config dirs apart, and anyone who can
 # guess the address can confirm it, so it is a pseudonym and not safe to publish. Writes aggregates only, no transcript text.
+# Repo cache: a cwd that no path rule claims is resolved from git while the directory exists, and the answer is kept in a
+# sidecar, so a rerun gives the same repo after a worktree is removed. The live git answer always wins while the path exists
+# (a path reused for another repo follows the new repo); the sidecar answers only for a path that is gone. A cwd that was never
+# resolved and is gone stays "unknown" and is not stored. Known limit: one repo is kept per cwd, so a path reused for another
+# repo gives every session read in that run the repo it has when the run starts. Location: $LEDGER_REPO_CACHE, else
+# $XDG_CACHE_HOME/critic/ledger-repo-cache.csv, else ~/.cache/critic/ledger-repo-cache.csv. Format: CSV with the header
+# cwd,repo,first_seen (first_seen is the UTC time of the run that first stored this repo for the cwd). A file that does not
+# parse is never overwritten: it is renamed to <file>.bad-<UTC stamp>, one line goes to stderr, and the run goes on with an empty
+# cache. Writers take an exclusive flock on <file>.lock, re-read the file inside the lock, merge their rows, and replace it
+# atomically, so concurrent runs keep each other's rows. Delete the file to resolve everything again. The file holds directory
+# paths, lives outside OUT_DIR, is mode 600 in a 700 directory, and is never part of the output. Path-rule answers are not stored.
 # by-token-class.csv splits this host's list price by token class (input, cache write, cache read, output): requests is the
 # count of priced requests that carry tokens of that class, list_usd the tokens times the price the script already applies
 # (cache write is the 5 minute and the 1 hour tokens together). A request whose model has no price is in neither column.
 import json,glob,os,re,collections,csv,sys,gzip,hashlib
-from datetime import datetime
+try: import fcntl
+except ImportError: fcntl=None
+from datetime import datetime,timezone
 out=sys.argv[1]; os.makedirs(out,exist_ok=True); P=json.load(open(sys.argv[2])); CLUSTER=sys.argv[3]; MAPF=sys.argv[4]
 root=os.path.expanduser(sys.argv[5] if len(sys.argv)>5 else '~/.claude/projects')
 LOGDIR=os.path.expanduser(sys.argv[6] if len(sys.argv)>6 else '~/.marvel/log')
@@ -161,6 +174,31 @@ def act(e,role,cls):
     if role=='-': return cls
     return {'builder':'building','reviewer':'review','research-supervisor':'research','supervisor':'supervision and relay','filer':'filing','maintainer':'maintenance','architect':'design','test-architect':'design','author':'design','envoy':'triage','critic':'review','reader':'research','analyst':'research','retrospector':'research','introspector':'research','writer':'design','editor':'design','worker':'building','fact-checker':'review','sweeper':'maintenance','researcher':'research','director':'supervision and relay','lead':'supervision and relay','screener':'review','panelist':'design'}.get(role,'other seat roles')
 _rc={}
+CACHEF=os.environ.get('LEDGER_REPO_CACHE') or os.path.join(os.environ.get('XDG_CACHE_HOME') or os.path.join(HOME,'.cache'),'critic','ledger-repo-cache.csv')
+RNEW={}
+def read_repo_cache(path):
+    # ({cwd: (repo, first_seen)}, None) for a good or absent file; (None, reason) for one that does not parse
+    if not os.path.exists(path): return {},None
+    try:
+        with open(path,newline='') as fh: text=fh.read()
+        if '\x00' in text: raise ValueError('nul byte')
+        rd=csv.reader(text.splitlines(True)); rows={}
+        if next(rd,None)!=['cwd','repo','first_seen']: raise ValueError('header')
+        for row in rd:
+            if len(row)!=3 or not row[0] or not row[1]: raise ValueError('row')
+            rows[row[0]]=(row[1],row[2])
+        return rows,None
+    except Exception as ex: return None,ex.__class__.__name__
+def quarantine_repo_cache(path,why):
+    aside=path+'.bad-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    try: os.replace(path,aside)
+    except OSError:
+        print('repo cache unreadable (%s) and could not be moved aside; it is left as it is and not rewritten'%why,file=sys.stderr); return False
+    print('repo cache unreadable (%s); moved aside to %s and started empty'%(why,os.path.basename(aside)),file=sys.stderr); return True
+RCACHE,_why=read_repo_cache(CACHEF)
+SAVEOK=True
+if RCACHE is None:
+    RCACHE={}; SAVEOK=quarantine_repo_cache(CACHEF,_why)
 GITENV={k:v for k,v in os.environ.items() if not k.startswith('GIT_')}
 def git(d,*a):
     try: r=subprocess.run(['git','--no-optional-locks','-c','core.fsmonitor=false','-C',d,*a],capture_output=True,timeout=20,env=GITENV)
@@ -178,6 +216,8 @@ def repo_of(cwd):
             if url:
                 u=re.sub(r'\.git$','',url.rstrip('/')); parts=re.split(r'[:/]',u); v='/'.join(parts[-2:])
             else: v=os.path.basename(top.rstrip('/'))
+            if v and (cwd not in RCACHE or RCACHE[cwd][0]!=v): RNEW[cwd]=v
+    elif v is None and cwd in RCACHE: v=RCACHE[cwd][0]
     _rc[cwd]=v or 'unknown'; return _rc[cwd]
 def goal_of(a,repo,team):
     for key,src in ((a,'activity'),(a+'|'+repo,'activity_repo'),(team,'team_first'),(repo,'repo'),(team,'team')):
@@ -243,6 +283,29 @@ for e in msgs.values():
         x=sess[e['sid']]; x['requests']+=1; x['usd_micro']+=usd
         if a=='hub wait (bus polling)': x['hub_micro']+=usd
         d=e['ts'][:10]; m=sessmeta.setdefault(e['sid'],[d,d]); m[0]=min(m[0],d); m[1]=max(m[1],d)
+def save_repo_cache():
+    # Failure to write the sidecar never fails the run: the next run resolves again.
+    if not RNEW or not SAVEOK: return
+    try:
+        d=os.path.dirname(CACHEF); os.makedirs(d,mode=0o700,exist_ok=True)
+        lockfd=os.open(CACHEF+'.lock',os.O_RDWR|os.O_CREAT,0o600)
+        try:
+            if fcntl: fcntl.flock(lockfd,fcntl.LOCK_EX)
+            cur,why=read_repo_cache(CACHEF)
+            if cur is None:
+                if not quarantine_repo_cache(CACHEF,why): return
+                cur={}
+            now=datetime.now(timezone.utc).isoformat(timespec='seconds')
+            for c,v in RNEW.items():
+                if c not in cur or cur[c][0]!=v: cur[c]=(v,now)
+            tmpf=CACHEF+'.%d.tmp'%os.getpid()
+            fd=os.open(tmpf,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600)
+            with os.fdopen(fd,'w',newline='') as fh:
+                w=csv.writer(fh, lineterminator='\n'); w.writerow(['cwd','repo','first_seen']); w.writerows([c,v[0],v[1]] for c,v in sorted(cur.items()))
+            os.replace(tmpf,CACHEF)
+        finally: os.close(lockfd)
+    except Exception as ex: print('repo cache not written: %s'%ex.__class__.__name__,file=sys.stderr)
+save_repo_cache()
 def write(name,keyf,hdr):
     t=collections.defaultdict(lambda:collections.Counter())
     for k,c in rows.items(): t[keyf(k)].update(c)
