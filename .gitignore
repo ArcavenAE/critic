@@ -1,2 +1,4 @@
 .beads
 target/
+__pycache__/
+*.pyc
