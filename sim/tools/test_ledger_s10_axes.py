@@ -252,6 +252,39 @@ class T(unittest.TestCase):
             got, want = self.director_classes(self.mutant(a, b))
             self.assertNotEqual(got, want)
 
+    def test_own_skill_rolls_up_to_own(self):
+        s = [('k1', None, [rec('k1', 160, '/srv/demo-orch/x', skill='demo-coach')]),
+             ('k2', None, [rec('k2', 161, '/srv/demo-fleet/y', skill='demo-coach')])]
+        got = lambda sc: sorted((r['class'], r['project_dir']) for r in run(sc, s)['unattributed-sessions.csv'])
+        want = [('operator own work (outside fleet)', 'own')] * 2
+        self.assertEqual(got(SCRIPT), want)
+        m = self.mutant("    own=bool(prules) or bool(srules)\n", "    own=bool(prules)\n")
+        self.assertNotEqual(sorted(r['project_dir'] for r in run(m, s)['unattributed-sessions.csv']), ['own', 'own'])
+
+    def seat_rows(self, script, labels):
+        s = [('t%d' % i, n, [rec('t%d' % i, 170 + i)]) for i, n in enumerate(labels)]
+        return {r['label_base']: (r['method'], r['activity']) for r in run(script, s)['by-seat-label.csv']}
+
+    def test_only_role_words_make_a_seat_label(self):
+        labels = ['acme-notes-g1-0', 'acme-superbuilder-g1-0', 'acme-builder-g1-0', 'dryrun-widget-g1-0']
+        got = self.seat_rows(SCRIPT, labels)
+        self.assertEqual(got['acme-builder'], ('agent-name', 'building'))
+        self.assertEqual(got['dryrun-widget'], ('agent-name', 'other seat roles'))
+        self.assertEqual(sorted(got), ['acme-builder', 'dryrun-widget', 'no seat name (unattributed)'])
+        self.assertEqual(got['no seat name (unattributed)'][0], 'agent-name (not a seat)')
+        m = self.mutant("        if not sb.startswith('dryrun-'): return None\n", "")
+        self.assertIn('acme-notes', self.seat_rows(m, labels))
+
+    def test_generic_role_words_are_seats_with_their_activity(self):
+        want = {'filer': 'filing', 'maintainer': 'maintenance', 'monitor': 'other seat roles', 'reader': 'research',
+                'writer': 'design', 'worker': 'building', 'editor': 'design', 'analyst': 'research',
+                'retrospector': 'research', 'introspector': 'research', 'sweeper': 'maintenance',
+                'fact-checker': 'review', 'merge-queue': 'other seat roles'}
+        got = self.seat_rows(SCRIPT, ['acme-%s-g1-0' % w for w in want])
+        self.assertEqual({k[len('acme-'):]: v for k, v in got.items()}, {w: ('agent-name', a) for w, a in want.items()})
+        m = self.mutant("'sweeper':'maintenance'", "'sweeper':'review'")
+        self.assertNotEqual(self.seat_rows(m, ['acme-sweeper-g1-0']), {'acme-sweeper': ('agent-name', 'maintenance')})
+
     def test_rule_column(self):
         s = [('r1', None, [rec('r1', 110, '/srv/demo-own/notes')]),
              ('r2', None, [rec('r2', 111, '/srv/demo-fleet/x', skill='demo-coach')]),
