@@ -9,10 +9,10 @@ SCRIPT = os.path.join(HERE, 'ledger-s10-axes.py')
 MODEL = 'demo-model'
 PRICES = {MODEL: {'in': 10000, 'cw5': 10000, 'cw1': 10000, 'cr': 10000, 'out': 10000}}
 MAP = [('kind', 'match', 'value', 'note'),
-       ('own', '^/srv/demo-own/', '', ''),
-       ('own_skill', 'demo-coach', '', ''),
+       ('own', '^/srv/demo-own/', 'vault', ''),
+       ('own_skill', 'demo-coach', 'coach', ''),
        ('orchestrator', '^/srv/demo-orch/', 'demo-orch', ''),
-       ('own', '^/srv/demo-both/', '', ''),
+       ('own', '^/srv/demo-both/', 'both-path', ''),
        ('orchestrator', '^/srv/demo-both/', 'demo-orch', '')]
 
 # label -> (team, role, activity); the role parser table from the I-119 spec, with invented seat names of the same shapes.
@@ -41,7 +41,7 @@ def rec(sid, n, cwd='/srv/demo-fleet/a', tools=(), skill=None, ts='2026-10-05T10
                       'cache_creation_input_tokens': 0}}}
 
 
-def run(script, sessions, launch_lines=(), gz_lines=()):
+def run(script, sessions, launch_lines=(), gz_lines=(), prices=None):
     """sessions: list of (sid, agent_name or None, [records]). Returns {file: rows} from the output dir."""
     with tempfile.TemporaryDirectory() as d:
         proj = os.path.join(d, 'cfg', 'projects', 'p'); os.makedirs(proj)
@@ -59,7 +59,7 @@ def run(script, sessions, launch_lines=(), gz_lines=()):
         with open(os.path.join(d, 'cfg', '.claude.json'), 'w') as fh:
             json.dump({'oauthAccount': {'emailAddress': 'Someone@Example.test'}}, fh)
         with open(os.path.join(d, 'prices.json'), 'w') as fh:
-            json.dump(PRICES, fh)
+            json.dump(PRICES if prices is None else prices, fh)
         with open(os.path.join(d, 'map.csv'), 'w', newline='') as fh:
             csv.writer(fh).writerows(MAP)
         out = os.path.join(d, 'out'); os.makedirs(out)
@@ -67,8 +67,11 @@ def run(script, sessions, launch_lines=(), gz_lines=()):
                             os.path.join(d, 'map.csv'), os.path.join(d, 'cfg', 'projects'), logd],
                            capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
-        res = {}
+        res = {'_cr': []}
         for f in os.listdir(out):
+            with open(os.path.join(out, f), 'rb') as fh:
+                if b'\r' in fh.read():
+                    res['_cr'].append(f)
             with open(os.path.join(out, f)) as fh:
                 res[f] = list(csv.DictReader(fh)) if f.endswith('.csv') else fh.read()
         return res
@@ -159,18 +162,18 @@ class T(unittest.TestCase):
     def test_rollup_mutant_that_prints_raw_turns_red(self):
         with open(SCRIPT) as fh:
             src = fh.read()
-        needle = "_cc[sid]=(c,rollup(k,orch,own))"
+        needle = "_cc[sid]=(c,rollup(k,orch,own),"
         self.assertEqual(src.count(needle), 1)
         with tempfile.TemporaryDirectory() as d:
             m = os.path.join(d, 'mutant.py')
             with open(m, 'w') as fh:
-                fh.write(src.replace(needle, "_cc[sid]=(c,k)"))
+                fh.write(src.replace(needle, "_cc[sid]=(c,k,"))
             self.assertNotEqual(self.dirs(m, self.CWDS), self.WANT)
 
-    def mutant(self, old, new):
+    def mutant(self, old, new, count=1):
         with open(SCRIPT) as fh:
             src = fh.read()
-        self.assertEqual(src.count(old), 1)
+        self.assertEqual(src.count(old), count)
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         m = os.path.join(d, 'mutant.py')
@@ -199,6 +202,109 @@ class T(unittest.TestCase):
         want = hashlib.sha256(b'someone@example.test').hexdigest()[:12]
         self.assertIn('signin_hash=' + want, res['attribution-meta.txt'])
         self.assertNotIn('example.test', json.dumps(res))
+
+
+    def test_not_a_seat_method_prints_no_name(self):
+        s = [('n1', 'demo-director', [rec('n1', 100, '/srv/demo-orch/x')]),
+             ('n2', 'demo-other-thing', [rec('n2', 101, '/srv/demo-orch/x')])]
+        res = run(SCRIPT, s)
+        self.assertIn('requests_agent_name_not_a_seat=2', res['attribution-meta.txt'])
+        self.assertIn('requests_agent_name=0', res['attribution-meta.txt'])
+        self.assertEqual({r['method'] for r in res['by-seat-label.csv']}, {'agent-name (not a seat)'})
+        self.assertNotIn('named-sessions.csv', res)
+        self.assertNotIn('demo-director', json.dumps(res))
+        self.assertNotIn('demo-other-thing', json.dumps(res))
+        m = self.mutant("'agent-name (not a seat)' if method=='agent-name' else method", "method")
+        self.assertNotIn('requests_agent_name_not_a_seat=2', run(m, s)['attribution-meta.txt'])
+
+    DIR = 'director sessions (coordination)'
+    ORCH = 'external orchestration (outside marvel)'
+
+    def director_classes(self, script):
+        mcp = 'mcp__director__send_message'
+        s = [('d1', None, [rec('d1', 150, '/srv/demo-orch/x', skill='director')]),
+             ('d2', None, [rec('d2', 151, '/srv/demo-orch/x', tools=[mcp, mcp, 'Bash'])]),
+             ('d3', None, [rec('d3', 152, '/srv/demo-orch/x', tools=[mcp, 'Bash', 'Read'])]),
+             ('d4', None, [rec('d4', 153, '/srv/demo-orch/x', skill='demo-other-skill')]),
+             ('d5', None, [rec('d5', 154, '/srv/demo-orch/x', skill='director', tools=[mcp, mcp])]),
+             ('d6', None, [rec('d6', 155, '/srv/demo-fleet/z', skill='director')]),
+             ('d7', None, [rec('d7', 156, '/srv/demo-orch/x', tools=[mcp, 'Bash'])])]
+        h = lambda x: hashlib.sha256(x.encode()).hexdigest()[:12]
+        rows = {r['session_hash']: (r['class'], r['director_rule']) for r in run(script, s)['unattributed-sessions.csv']}
+        want = {h('d1'): (self.DIR, 'skill'), h('d2'): (self.DIR, 'mcp-majority'), h('d3'): (self.ORCH, ''),
+                h('d4'): (self.ORCH, ''), h('d5'): (self.DIR, 'skill+mcp-majority'),
+                h('d6'): ('no seat name (unattributed)', ''), h('d7'): (self.ORCH, '')}
+        return rows, want
+
+    def test_director_sessions_are_classed_by_tool_calls(self):
+        got, want = self.director_classes(SCRIPT)
+        self.assertEqual(got, want)
+
+    def test_director_class_mutants_turn_red(self):
+        old = "    elif orch is not None: c=C_DIR if dr else C_ORCH\n"
+        for new in ("    elif orch is not None: c=C_ORCH\n",
+                    "    elif orch is not None: c=C_DIR\n"):
+            got, want = self.director_classes(self.mutant(old, new))
+            self.assertNotEqual(got, want)
+        for a, b in (("'director' in skills.get(sid,set())", "False"),
+                     ("2*tc['director']>tc['n']", "2*tc['director']>=tc['n']"),
+                     ("bool(tc['n']) and 2*tc['director']>tc['n']", "False")):
+            got, want = self.director_classes(self.mutant(a, b))
+            self.assertNotEqual(got, want)
+
+    def test_rule_column(self):
+        s = [('r1', None, [rec('r1', 110, '/srv/demo-own/notes')]),
+             ('r2', None, [rec('r2', 111, '/srv/demo-fleet/x', skill='demo-coach')]),
+             ('r3', None, [rec('r3', 112, '/srv/demo-own/notes', skill='demo-coach')]),
+             ('r4', None, [rec('r4', 113, '/srv/demo-orch/x')])]
+        h = lambda x: hashlib.sha256(x.encode()).hexdigest()[:12]
+        want = {h('r1'): 'vault', h('r2'): 'coach', h('r3'): 'vault+coach', h('r4'): ''}
+        got = lambda sc: {r['session_hash']: r['rule'] for r in run(sc, s)['unattributed-sessions.csv']}
+        self.assertEqual(got(SCRIPT), want)
+        self.assertNotEqual(got(self.mutant("'+'.join(dict.fromkeys(prules+srules))", "'+'.join(dict.fromkeys(prules))")), want)
+
+    def test_dated_model_id_is_priced(self):
+        p = {'claude-demo-1': PRICES[MODEL]}
+        dated = rec('p1', 120); dated['message']['model'] = 'claude-demo-1-20251001'
+        s = [('p1', None, [dated])]
+        res = run(SCRIPT, s, prices=p)
+        self.assertEqual(res['daily-by-model.csv'][0]['unpriced'], '0')
+        self.assertEqual(res['daily-by-model.csv'][0]['model'], 'claude-demo-1-20251001')
+        m = self.mutant("return P.get(model) or P.get(re.sub(r'-\\d{8}$','',model or ''))", "return P.get(model)")
+        self.assertEqual(run(m, s, prices=p)['daily-by-model.csv'][0]['unpriced'], '1')
+
+    def test_filer_and_maintainer_activities(self):
+        s = [('f1', 'widget-filer-g1-0', [rec('f1', 130)]), ('f2', 'widget-maintainer-g1-0', [rec('f2', 131)]),
+             ('f3', 'dryrun-widget-g1-0', [rec('f3', 132)])]
+        got = lambda sc: {r['label_base']: r['activity'] for r in run(sc, s)['by-seat-label.csv']}
+        want = {'widget-filer': 'filing', 'widget-maintainer': 'maintenance', 'dryrun-widget': 'other seat roles'}
+        self.assertEqual(got(SCRIPT), want)
+        self.assertNotEqual(got(self.mutant("'filer':'filing','maintainer':'maintenance',", "")), want)
+
+    def test_no_output_has_a_cr_byte(self):
+        s = [('x1', None, [rec('x1', 140)]), ('x2', 'demo-director', [rec('x2', 141)])]
+        self.assertEqual(run(SCRIPT, s)['_cr'], [])
+        m = self.mutant("w=csv.writer(fh,lineterminator='\\n');", "w=csv.writer(fh);", 2)
+        self.assertNotEqual(run(m, s)['_cr'], [])
+
+    def test_price_files(self):
+        def sha(f):
+            with open(os.path.join(HERE, f), 'rb') as fh:
+                return hashlib.sha256(fh.read()).hexdigest()
+        self.assertEqual(sha('prices-s11.json'), 'ac42f453392f' + sha('prices-s11.json')[12:])
+        with open(os.path.join(HERE, 'prices-s11.json')) as fh:
+            s11 = json.load(fh)
+        with open(os.path.join(HERE, 'prices-s12.json')) as fh:
+            s12 = json.load(fh)
+        for k, v in s11.items():
+            if k != '_source':
+                self.assertEqual(s12[k], v)
+        want = {'claude-opus-5': (5.0, 25.0, 0.5, 6.25, 10.0), 'claude-sonnet-5': (2.0, 10.0, 0.2, 2.5, 4.0),
+                'claude-haiku-4-5': (1.0, 5.0, 0.1, 1.25, 2.0), 'claude-fable-5-1': (10.0, 50.0, 0.25, 12.5, 20.0)}
+        for k, (i, o, cr, w5, w1) in want.items():
+            self.assertEqual((s12[k]['in'], s12[k]['out'], s12[k]['cr'], s12[k]['cw5'], s12[k]['cw1']), (i, o, cr, w5, w1))
+        self.assertEqual(sorted(set(s12) - set(s11)), sorted(want))
+        self.assertIn('cached list rates', s12['_source'])
 
 
 if __name__ == '__main__':
