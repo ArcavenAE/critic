@@ -13,8 +13,12 @@
 #   repo           match = repo (owner/name)             -> goal
 #   team           match = team                          -> goal
 #   path           match = regex on the cwd, home as ~    -> repo (applied before git)
-#   own            match = regex on the cwd, home as ~    -> operator own work (outside fleet); value unused
-#   own_skill      match = skill name                      -> operator own work (outside fleet); value unused
+#   own            match = regex on the cwd, home as ~    -> operator own work (outside fleet); value = the rule's
+#                                                           name, shown in the `rule` column of unattributed-sessions.csv
+#   own_skill      match = skill name                      -> operator own work (outside fleet); value = the rule's name,
+#                                                           joined to a matching own rule's name with "+"
+#   named          match = regex on the agent name        -> value = a class for a session whose agent-name is not a seat
+#                                                           label (used instead of external orchestration; own rules win)
 #   orchestrator   match = regex on the cwd, home as ~    -> external orchestration (outside marvel); value = the
 #                                                           orchestrator name the project dir is rolled up to
 # Unmatched goal is "unmapped"; unmatched repo is "unknown". Both are reported as their own rows.
@@ -29,7 +33,11 @@
 # operator work without a positive rule: own (kind own or own_skill), external orchestration (kind
 # orchestrator), else "no seat name (unattributed)". A harness token (-claude, -codex, -opencode, -crush,
 # -goose) ends a seat base before the role is matched. unattributed-sessions.csv rolls each project dir up to
-# an orchestrator name, own, temp or home; it never prints a raw path. signin_hash in attribution-meta.txt is
+# an orchestrator name, own, temp or home; it never prints a raw path. Every CSV ends its lines with a bare
+# newline, not the csv module's CRLF default. A session whose agent-name is not a seat
+# label has method "agent-name (not a seat)" and is listed in named-sessions.csv (agent name, class, sessions,
+# requests, list_usd). A model id with a trailing -YYYYMMDD date is priced at its undated id when only that is in
+# the price file. filer and maintainer seats are activities "filing" and "maintenance". signin_hash in attribution-meta.txt is
 # an unsalted 12-hex sha256 of the lowercased address: it tells two config dirs apart, and anyone who can
 # guess the address can confirm it, so it is a pseudonym and not safe to publish. Writes aggregates only, no transcript text.
 import json,glob,os,re,collections,csv,sys,gzip,hashlib
@@ -43,8 +51,9 @@ MAP=collections.defaultdict(list)
 for row in csv.DictReader(open(MAPF)):
     MAP[row['kind'].strip()].append((row['match'].strip(),row['value'].strip()))
 PATHR=[(re.compile(m),v) for m,v in MAP['path']]
-OWNR=[re.compile(m) for m,v in MAP['own']]
-OWNSKILL={m for m,v in MAP['own_skill']}
+OWNR=[(re.compile(m),v) for m,v in MAP['own']]
+OWNSKILL=dict(MAP['own_skill'])
+NAMEDR=[(re.compile(m),v) for m,v in MAP['named']]
 ORCHR=[(re.compile(m),v) for m,v in MAP['orchestrator']]
 GOAL={k:dict(MAP[k]) for k in ('activity','activity_repo','team_first','repo','team')}
 SEAT=re.compile(r'^([a-z0-9]+(?:-[a-z0-9]+)*?)-g(\d+)-(\d+)$')
@@ -106,7 +115,7 @@ def seat(sid):
     if not n and sid and sid.lower() in launch: n=launch[sid.lower()]; method='launch-log'
     if not n: return ('(no seat name)','-','-','none','(no seat name)')
     p=parse_label(n)
-    if not p: return ('(named, not a seat label)','-','-',method,'(named, not a seat label)')
+    if not p: return ('(named, not a seat label)','-','-','agent-name (not a seat)' if method=='agent-name' else method,'(named, not a seat label)')
     return (n,p[1],p[2],method,p[0])
 # per stream ordering for cold start / cache death
 streams=collections.defaultdict(list)
@@ -130,7 +139,7 @@ def act(e,role,cls):
     if e['side']: return 'subagent work'
     if e['tools'] and e['tools']<=WAIT: return 'hub wait (bus polling)'
     if role=='-': return cls
-    return {'builder':'building','reviewer':'review','research-supervisor':'research','supervisor':'supervision and relay','architect':'design','test-architect':'design','author':'design','envoy':'triage','critic':'review'}.get(role,'other seat roles')
+    return {'builder':'building','reviewer':'review','research-supervisor':'research','supervisor':'supervision and relay','filer':'filing','maintainer':'maintenance','architect':'design','test-architect':'design','author':'design','envoy':'triage','critic':'review'}.get(role,'other seat roles')
 _rc={}
 GITENV={k:v for k,v in os.environ.items() if not k.startswith('GIT_')}
 def git(d,*a):
@@ -168,26 +177,33 @@ def rollup(k,orch,own):
     if orch is not None: return orch
     if re.match(r'^(/tmp/|/private/tmp/|/var/folders/|/private/var/folders/)',k) or 'scratchpad' in k: return 'temp'
     return 'home'
+def price(model):
+    # exact id first, then the id without a trailing -YYYYMMDD date (claude-haiku-4-5-20251001 -> claude-haiku-4-5)
+    return P.get(model) or P.get(re.sub(r'-\d{8}$','',model or ''))
 def uclass(sid):
     # class and rolled-up project dir of a session with no seat; one answer per session
     if sid in _cc: return _cc[sid]
     k=tilde(first.get(sid,('',''))[1])
     orch=next((v for rx,v in ORCHR if rx.search(k)),None)
-    own=any(rx.search(k) for rx in OWNR)
-    if own or (skills.get(sid,set())&OWNSKILL): c=C_OWN
+    prules=[v for rx,v in OWNR if rx.search(k)]; own=bool(prules)
+    srules=[OWNSKILL[x] for x in sorted(skills.get(sid,set())&set(OWNSKILL))]
+    rule='+'.join(dict.fromkeys(prules+srules))
+    nm=next((v for rx,v in NAMEDR if rx.search(names.get(sid) or '')),None)
+    if own or srules: c=C_OWN
+    elif nm is not None: c=nm
     elif orch is not None: c=C_ORCH
     else: c=C_NONE
-    _cc[sid]=(c,rollup(k,orch,own)); return _cc[sid]
+    _cc[sid]=(c,rollup(k,orch,own),rule if c==C_OWN else ''); return _cc[sid]
 rows=collections.defaultdict(lambda:collections.Counter())
 seatrows=collections.defaultdict(lambda:collections.Counter())
 daily=collections.defaultdict(lambda:collections.Counter())
 sess=collections.defaultdict(lambda:collections.Counter()); sessmeta={}
-bymethod=collections.Counter()
+bymethod=collections.Counter(); named=collections.defaultdict(lambda:collections.Counter()); namedsids=collections.defaultdict(set)
 for e in msgs.values():
     if e['model']=='<synthetic>': continue
     lab,team,role,method,base=seat(e['sid'])
     cls=uclass(e['sid'])[0] if role=='-' else None
-    a=act(e,role,cls); p=P.get(e['model']); repo=repo_of(e['cwd']); goal=goal_of(a,repo,team)
+    a=act(e,role,cls); p=price(e['model']); repo=repo_of(e['cwd']); goal=goal_of(a,repo,team)
     usd=round((e['in']*p['in']+e['cw5v']*p['cw5']+e['cw1']*p['cw1']+e['cr']*p['cr']+e['out']*p['out'])) if p else 0
     k=(e['ts'][:10],repo,goal,a,team,role)
     c=rows[k]; c['requests']+=1; bymethod[method]+=1
@@ -195,6 +211,9 @@ for e in msgs.values():
     dc=daily[(e['ts'][:10],e['model'])]; dc['requests']+=1
     if p: c['usd_micro']+=usd; sc['usd_micro']+=usd; dc['usd_micro']+=usd
     else: c['unpriced']+=1; sc['unpriced']+=1; dc['unpriced']+=1
+    if method=='agent-name (not a seat)':
+        nk=(names[e['sid']],cls); named[nk]['requests']+=1; namedsids[nk].add(e['sid'])
+        if p: named[nk]['usd_micro']+=usd
     if cls:
         x=sess[e['sid']]; x['requests']+=1; x['usd_micro']+=usd
         if a=='hub wait (bus polling)': x['hub_micro']+=usd
@@ -203,7 +222,7 @@ def write(name,keyf,hdr):
     t=collections.defaultdict(lambda:collections.Counter())
     for k,c in rows.items(): t[keyf(k)].update(c)
     with open(out+'/'+name,'w',newline='') as fh:
-        w=csv.writer(fh); w.writerow(['cluster',*hdr,'requests','unpriced','list_usd'])
+        w=csv.writer(fh,lineterminator='\n'); w.writerow(['cluster',*hdr,'requests','unpriced','list_usd'])
         for k in sorted(t,key=lambda k:-t[k]['usd_micro']): w.writerow([CLUSTER,*k,t[k]['requests'],t[k]['unpriced'],round(t[k]['usd_micro']/1e6,2)])
 write('axes-rows.csv',lambda k:k,['day','repo','goal','activity','team','role'])
 write('by-repo.csv',lambda k:(k[1],),['repo'])
@@ -211,12 +230,14 @@ write('by-goal.csv',lambda k:(k[2],),['goal'])
 write('repo-by-activity.csv',lambda k:(k[1],k[3]),['repo','activity'])
 def wr(name,hdr,data):
     with open(out+'/'+name,'w',newline='') as fh:
-        w=csv.writer(fh); w.writerow(hdr); w.writerows(data)
+        w=csv.writer(fh,lineterminator='\n'); w.writerow(hdr); w.writerows(data)
 wr('by-seat-label.csv',['cluster','label_base','method','team','role','activity','requests','unpriced','list_usd'],
    [[CLUSTER,*k,c['requests'],c['unpriced'],round(c['usd_micro']/1e6,2)] for k,c in sorted(seatrows.items(),key=lambda kc:-kc[1]['usd_micro'])])
-wr('unattributed-sessions.csv',['cluster','session_hash','class','project_dir','first_day','last_day','requests','list_usd','hub_wait_usd'],
-   [[CLUSTER,H(sid),uclass(sid)[0],uclass(sid)[1],sessmeta[sid][0],sessmeta[sid][1],c['requests'],round(c['usd_micro']/1e6,2),round(c['hub_micro']/1e6,2)]
+wr('unattributed-sessions.csv',['cluster','session_hash','class','project_dir','rule','first_day','last_day','requests','list_usd','hub_wait_usd'],
+   [[CLUSTER,H(sid),uclass(sid)[0],uclass(sid)[1],uclass(sid)[2],sessmeta[sid][0],sessmeta[sid][1],c['requests'],round(c['usd_micro']/1e6,2),round(c['hub_micro']/1e6,2)]
     for sid,c in sorted(sess.items(),key=lambda kc:-kc[1]['usd_micro'])])
+wr('named-sessions.csv',['cluster','agent_name','class','sessions','requests','list_usd'],
+   [[CLUSTER,nk[0],nk[1],len(namedsids[nk]),c['requests'],round(c['usd_micro']/1e6,2)] for nk,c in sorted(named.items(),key=lambda kc:-kc[1]['usd_micro'])])
 wr('daily-by-model.csv',['cluster','day','model','requests','list_usd','unpriced'],
    [[CLUSTER,d,m,c['requests'],round(c['usd_micro']/1e6,2),c['unpriced']] for (d,m),c in sorted(daily.items())])
 def signin():
@@ -228,7 +249,7 @@ def signin():
         except Exception: continue
     return 'none'
 with open(out+'/attribution-meta.txt','w') as fh:
-    for m in ('agent-name','launch-log','none'): fh.write('requests_%s=%d\n'%(m.replace('-','_'),bymethod[m]))
+    for m,key in (('agent-name','agent_name'),('agent-name (not a seat)','agent_name_not_a_seat'),('launch-log','launch_log'),('none','none')): fh.write('requests_%s=%d\n'%(key,bymethod[m]))
     fh.write('# signin_hash is an unsalted 12-hex pseudonym of the signed-in address, not safe to publish\n')
     fh.write('signin_hash=%s\n'%signin())
 tot=collections.Counter()
