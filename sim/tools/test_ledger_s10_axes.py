@@ -2,7 +2,7 @@
 # Tests for ledger-s10-axes.py. Runs the script end to end over invented transcripts, an invented map and an
 # invented marvel log, so nothing here reads a real home directory.
 # Run: python3 -I sim/tools/test_ledger_s10_axes.py
-import csv, gzip, json, os, subprocess, sys, tempfile, unittest, hashlib
+import csv, gzip, json, os, shutil, subprocess, sys, tempfile, unittest, hashlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, 'ledger-s10-axes.py')
@@ -11,7 +11,9 @@ PRICES = {MODEL: {'in': 10000, 'cw5': 10000, 'cw1': 10000, 'cr': 10000, 'out': 1
 MAP = [('kind', 'match', 'value', 'note'),
        ('own', '^/srv/demo-own/', '', ''),
        ('own_skill', 'demo-coach', '', ''),
-       ('orchestrator', '^/srv/demo-orch/', 'demo-orch', '')]
+       ('orchestrator', '^/srv/demo-orch/', 'demo-orch', ''),
+       ('own', '^/srv/demo-both/', '', ''),
+       ('orchestrator', '^/srv/demo-both/', 'demo-orch', '')]
 
 # label -> (team, role, activity); the role parser table from the I-119 spec, with invented seat names of the same shapes.
 TABLE = [
@@ -147,10 +149,12 @@ class T(unittest.TestCase):
         return sorted(r['project_dir'] for r in run(script, s)['unattributed-sessions.csv'])
 
     CWDS = ['/private/tmp/claude-1/scratchpad-9f2c/work', '/tmp/x/y', '/Users/demo-user/work/other-org/some-repo',
-            '/srv/demo-own/notes', '/srv/demo-orch/client-x/repo']
+            '/srv/demo-own/notes', '/srv/demo-orch/client-x/repo', '/srv/x/scratchpad-1/w']
+
+    WANT = sorted(['temp', 'temp', 'temp', 'home', 'own', 'demo-orch'])
 
     def test_project_dir_is_rolled_up_never_raw(self):
-        self.assertEqual(self.dirs(SCRIPT, self.CWDS), sorted(['temp', 'temp', 'home', 'own', 'demo-orch']))
+        self.assertEqual(self.dirs(SCRIPT, self.CWDS), self.WANT)
 
     def test_rollup_mutant_that_prints_raw_turns_red(self):
         with open(SCRIPT) as fh:
@@ -161,7 +165,34 @@ class T(unittest.TestCase):
             m = os.path.join(d, 'mutant.py')
             with open(m, 'w') as fh:
                 fh.write(src.replace(needle, "_cc[sid]=(c,k)"))
-            self.assertNotEqual(self.dirs(m, self.CWDS), sorted(['temp', 'temp', 'home', 'own', 'demo-orch']))
+            self.assertNotEqual(self.dirs(m, self.CWDS), self.WANT)
+
+    def mutant(self, old, new):
+        with open(SCRIPT) as fh:
+            src = fh.read()
+        self.assertEqual(src.count(old), 1)
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        m = os.path.join(d, 'mutant.py')
+        with open(m, 'w') as fh:
+            fh.write(src.replace(old, new))
+        return m
+
+    def test_scratchpad_clause_is_pinned(self):
+        m = self.mutant(" or 'scratchpad' in k", "")
+        self.assertNotEqual(self.dirs(m, self.CWDS), self.WANT)
+
+    def test_own_wins_over_orchestrator_in_class_and_rollup(self):
+        s = [('b1', None, [rec('b1', 80, '/srv/demo-both/p')])]
+        row = run(SCRIPT, s)['unattributed-sessions.csv'][0]
+        self.assertEqual((row['class'], row['project_dir']), ('operator own work (outside fleet)', 'own'))
+        m = self.mutant("    if own: return 'own'\n    if orch is not None: return orch\n",
+                        "    if orch is not None: return orch\n    if own: return 'own'\n")
+        self.assertEqual(run(m, s)['unattributed-sessions.csv'][0]['project_dir'], 'demo-orch')
+
+    def test_signin_note_says_pseudonym(self):
+        res = run(SCRIPT, [('c1', None, [rec('c1', 90)])])
+        self.assertIn('unsalted 12-hex pseudonym', res['attribution-meta.txt'])
 
     def test_signin_hash_is_lowercased_email_hash_and_no_text_leaks(self):
         res = run(SCRIPT, [('b1', None, [rec('b1', 1)])])
