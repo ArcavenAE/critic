@@ -45,11 +45,12 @@
 # guess the address can confirm it, so it is a pseudonym and not safe to publish. Writes aggregates only, no transcript text.
 # Repo cache: a cwd that no path rule claims is resolved from git while the directory exists, and the answer is kept in a
 # sidecar, so a rerun gives the same repo after a worktree is removed. The live git answer always wins while the path exists
-# (a path reused for another repo follows the new repo); the sidecar answers only for a path that is gone. A cwd that was never
+# (a path reused for another repo follows the new repo); the sidecar answers for a path that is gone, and for one where git gives no
+# answer (a timeout, say). A cwd that was never
 # resolved and is gone stays "unknown" and is not stored. Known limit: one repo is kept per cwd, so a path reused for another
 # repo gives every session read in that run the repo it has when the run starts. Location: $LEDGER_REPO_CACHE, else
 # $XDG_CACHE_HOME/critic/ledger-repo-cache.csv, else ~/.cache/critic/ledger-repo-cache.csv. Format: CSV with the header
-# cwd,repo,first_seen (first_seen is the UTC time of the run that first stored this repo for the cwd). A file that does not
+# cwd,repo,first_seen (first_seen is the UTC time of the run that first stored this repo for the cwd). A blank line is skipped. A file that does not
 # parse is never overwritten: it is renamed to <file>.bad-<UTC stamp>, one line goes to stderr, and the run goes on with an empty
 # cache. Writers take an exclusive flock on <file>.lock, re-read the file inside the lock, merge their rows, and replace it
 # atomically, so concurrent runs keep each other's rows. Delete the file to resolve everything again. The file holds directory
@@ -185,6 +186,7 @@ def read_repo_cache(path):
         rd=csv.reader(text.splitlines(True)); rows={}
         if next(rd,None)!=['cwd','repo','first_seen']: raise ValueError('header')
         for row in rd:
+            if len(row)<=1 and not ''.join(row).strip(): continue   # a blank line is not a row
             if len(row)!=3 or not row[0] or not row[1]: raise ValueError('row')
             rows[row[0]]=(row[1],row[2])
         return rows,None
@@ -217,7 +219,7 @@ def repo_of(cwd):
                 u=re.sub(r'\.git$','',url.rstrip('/')); parts=re.split(r'[:/]',u); v='/'.join(parts[-2:])
             else: v=os.path.basename(top.rstrip('/'))
             if v and (cwd not in RCACHE or RCACHE[cwd][0]!=v): RNEW[cwd]=v
-    elif v is None and cwd in RCACHE: v=RCACHE[cwd][0]
+    if v is None and cwd in RCACHE: v=RCACHE[cwd][0]   # the path is gone, or git gave no answer for it
     _rc[cwd]=v or 'unknown'; return _rc[cwd]
 def goal_of(a,repo,team):
     for key,src in ((a,'activity'),(a+'|'+repo,'activity_repo'),(team,'team_first'),(repo,'repo'),(team,'team')):

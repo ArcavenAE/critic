@@ -546,6 +546,51 @@ class T(unittest.TestCase):
                 return
         self.fail('the mutant lost no row in 5 rounds of 12 writers')
 
+    # Lows from the approval of critic#42: blank lines in the sidecar, and a path where git gives no answer.
+    def blank_lines_sidecar(self, script):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        cache = os.path.join(d, 'cache.csv')
+        gone = os.path.join(d, 'gone-worktree')
+        text = 'cwd,repo,first_seen\n\n%s,demo-org/kept,2026-10-01T00:00:00+00:00\n\n\n' % gone
+        with open(cache, 'w') as fh:
+            fh.write(text)
+        res = run(script, [('g1', None, [rec('g1', 340, cwd=gone)])], cache=cache)
+        return cache, text, res
+
+    def test_blank_lines_in_the_sidecar_are_skipped(self):
+        cache, text, res = self.blank_lines_sidecar(SCRIPT)
+        self.assertEqual([r['repo'] for r in res['by-repo.csv']], ['demo-org/kept'])
+        self.assertEqual(glob.glob(cache + '.bad-*'), [])
+        self.assertEqual(res['_stderr'], '')
+        with open(cache) as fh:
+            self.assertEqual(fh.read(), text)
+
+    def test_blank_line_mutant_that_quarantines_turns_red(self):
+        m = self.mutant("            if len(row)<=1 and not ''.join(row).strip(): continue   # a blank line is not a row\n", "")
+        cache, text, res = self.blank_lines_sidecar(m)
+        self.assertEqual(len(glob.glob(cache + '.bad-*')), 1)
+
+    def git_fails_on_existing_path(self, script):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        main = self.make_repo(d, 'main-a', 'demo-org/repo-a'); slot = os.path.join(d, 'slot1'); cache = os.path.join(d, 'cache.csv')
+        self.add_wt(main, slot)
+        first = self.two_sessions(script, slot, cache)
+        self.rm_wt(main, slot)
+        os.mkdir(slot)                 # the path exists again but is no repository: git gives no answer
+        return first, self.two_sessions(script, slot, cache)
+
+    def test_sidecar_answers_when_git_fails_on_an_existing_path(self):
+        first, second = self.git_fails_on_existing_path(SCRIPT)
+        self.assertEqual(first, [('demo-org/repo-a', '2')])
+        self.assertEqual(second, [('demo-org/repo-a', '2')])
+
+    def test_fallback_mutant_that_reports_unknown_turns_red(self):
+        m = self.mutant("    if v is None and cwd in RCACHE: v=RCACHE[cwd][0]   # the path is gone, or git gave no answer for it\n",
+                        "    if v is None and cwd in RCACHE and not os.path.isdir(cwd): v=RCACHE[cwd][0]\n")
+        self.assertEqual(self.git_fails_on_existing_path(m)[1], [('unknown', '2')])
+
     def test_price_files(self):
         def sha(f):
             with open(os.path.join(HERE, f), 'rb') as fh:
