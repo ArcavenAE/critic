@@ -354,6 +354,49 @@ class T(unittest.TestCase):
         m = self.mutant("w=csv.writer(fh,lineterminator='\\n');", "w=csv.writer(fh);", 2)
         self.assertNotEqual(run(m, s)['_cr'], [])
 
+    # by-token-class.csv: list price split by input, cache write, cache read and output. The prices are per class
+    # (dollars per million tokens), so each class has a distinct, checkable dollar figure on invented token counts.
+    TOK_PRICES = {MODEL: {'in': 3.0, 'cw5': 3.75, 'cw1': 6.0, 'cr': 0.3, 'out': 15.0}}
+
+    @staticmethod
+    def tok_rec(sid, n, model=MODEL, **u):
+        r = rec(sid, n)
+        r['message']['model'] = model
+        r['message']['usage'] = u
+        return r
+
+    def tok_sessions(self):
+        full = self.tok_rec('t1', 200, input_tokens=1000000, output_tokens=100000, cache_read_input_tokens=2000000,
+                            cache_creation_input_tokens=650000,
+                            cache_creation={'ephemeral_5m_input_tokens': 400000, 'ephemeral_1h_input_tokens': 250000})
+        out_only = self.tok_rec('t1', 201, output_tokens=100000)
+        unpriced = self.tok_rec('t1', 202, model='demo-unpriced', input_tokens=5000000, output_tokens=5000000)
+        return [('t1', None, [full, out_only, unpriced])]
+
+    def tok_rows(self, script):
+        res = run(script, self.tok_sessions(), prices=self.TOK_PRICES)
+        return [(r['token_class'], r['requests'], r['list_usd']) for r in res['by-token-class.csv']], res
+
+    TOK_WANT = [('input', '1', '3.0'), ('cache write', '1', '3.0'), ('cache read', '1', '0.6'), ('output', '2', '3.0')]
+
+    def test_token_class_rows(self):
+        got, res = self.tok_rows(SCRIPT)
+        self.assertEqual(got, self.TOK_WANT)
+        self.assertEqual({r['cluster'] for r in res['by-token-class.csv']}, {'demo'})
+        self.assertEqual(list(res['by-token-class.csv'][0]), ['cluster', 'token_class', 'requests', 'list_usd'])
+
+    def test_token_class_rows_reconcile_with_the_total(self):
+        got, res = self.tok_rows(SCRIPT)
+        total = json.loads(res['axes-meta.json'])['list_usd']
+        self.assertAlmostEqual(sum(float(x[2]) for x in got), total, places=2)
+
+    def test_token_class_mutants_turn_red(self):
+        # a cache write priced at the 5 minute rate only, and a request counted without tokens of the class
+        got, _ = self.tok_rows(self.mutant("+e['cw1']*p['cw1']),\n", "),\n"))
+        self.assertNotEqual(got, self.TOK_WANT)
+        got, _ = self.tok_rows(self.mutant("if n_tok>0: tk[nm]['requests']+=1", "tk[nm]['requests']+=1"))
+        self.assertNotEqual(got, self.TOK_WANT)
+
     def test_price_files(self):
         def sha(f):
             with open(os.path.join(HERE, f), 'rb') as fh:
