@@ -13,17 +13,17 @@ MAP = [('kind', 'match', 'value', 'note'),
        ('own_skill', 'demo-coach', '', ''),
        ('orchestrator', '^/srv/demo-orch/', 'demo-orch', '')]
 
-# label -> (team, role, activity); the role parser table from the I-119 spec.
+# label -> (team, role, activity); the role parser table from the I-119 spec, with invented seat names of the same shapes.
 TABLE = [
-    ('reviewer-reviewer-claude-g17-0', 'reviewer', 'reviewer', 'review'),
+    ('acme-reviewer-claude-g1-0', 'acme', 'reviewer', 'review'),
     ('acme-reviewer-reviewer-claude-g24-0', 'acme', 'reviewer', 'review'),
-    ('reviewer-reviewer-codex-g3-0', 'reviewer', 'reviewer', 'review'),
-    ('reviewer-reviewer-opencode-g1-0', 'reviewer', 'reviewer', 'review'),
-    ('reviewer-reviewer-crush-g1-0', 'reviewer', 'reviewer', 'review'),
-    ('reviewer-reviewer-goose-g1-0', 'reviewer', 'reviewer', 'review'),
-    ('reviewer-supervisor-g22-0', 'reviewer', 'supervisor', 'supervision and relay'),
-    ('product-reviewer-g34-0', 'product', 'reviewer', 'review'),
-    ('arcaven-claude-reviewer-g1-0', 'arcaven-claude', 'reviewer', 'review'),
+    ('widget-reviewer-codex-g3-0', 'widget', 'reviewer', 'review'),
+    ('widget-reviewer-opencode-g1-0', 'widget', 'reviewer', 'review'),
+    ('widget-reviewer-crush-g1-0', 'widget', 'reviewer', 'review'),
+    ('widget-reviewer-goose-g1-0', 'widget', 'reviewer', 'review'),
+    ('acme-reviewer-supervisor-g1-0', 'acme-reviewer', 'supervisor', 'supervision and relay'),
+    ('widget-reviewer-g1-0', 'widget', 'reviewer', 'review'),
+    ('acme-claude-reviewer-g1-0', 'acme-claude', 'reviewer', 'review'),
 ]
 
 
@@ -111,7 +111,7 @@ class T(unittest.TestCase):
 
     def test_agent_name_wins_over_launch_log(self):
         u = '33333333-3333-4333-8333-333333333333'
-        res = run(SCRIPT, [(u, 'product-builder-g1-0', [rec(u, 1)])],
+        res = run(SCRIPT, [(u, 'widget-builder-g1-0', [rec(u, 1)])],
                   ["session demo-ws/other-envoy-g1-0 exec: x '--session-id' '%s'" % u])
         self.assertEqual(res['by-seat-label.csv'][0]['method'], 'agent-name')
         self.assertEqual(res['by-seat-label.csv'][0]['role'], 'builder')
@@ -122,7 +122,7 @@ class T(unittest.TestCase):
              ('a3', None, [rec('a3', 3, '/srv/demo-orch/client-x/repo')]),
              ('a4', None, [rec('a4', 4, '/srv/demo-fleet/y'),
                            rec('a4', 5, '/srv/demo-fleet/y', tools=['mcp__director__wait_for_message'])]),
-             ('a5', 'product-builder-g1-0', [rec('a5', 6)])]
+             ('a5', 'widget-builder-g1-0', [rec('a5', 6)])]
         res = run(SCRIPT, s)
         cls = {r['session_hash']: r for r in res['unattributed-sessions.csv']}
         h = lambda x: hashlib.sha256(x.encode()).hexdigest()[:12]
