@@ -30,7 +30,9 @@
 # launch-log or none. A session with no seat is split by rule, in this order, and nothing is classed as
 # operator work without a positive rule: own (kind own or own_skill), external orchestration (kind
 # orchestrator), else "no seat name (unattributed)". A harness token (-claude, -codex, -opencode, -crush,
-# -goose) ends a seat base before the role is matched. unattributed-sessions.csv rolls each project dir up to
+# -goose) ends a seat base before the role is matched. A label is a seat only when its role part is a word in
+# ROLES (generic role words; a host whose role words are outside the list sees those seats as unattributed, a
+# known limit) or it starts with dryrun-; any other agent name is "agent-name (not a seat)". unattributed-sessions.csv rolls each project dir up to
 # an orchestrator name, own, temp or home; it never prints a raw path. Every CSV ends its lines with a bare
 # newline, not the csv module's CRLF default. A session whose agent-name is not a seat
 # label has method "agent-name (not a seat)"; no output carries an agent name. A session that would otherwise be
@@ -58,19 +60,26 @@ ORCHR=[(re.compile(m),v) for m,v in MAP['orchestrator']]
 GOAL={k:dict(MAP[k]) for k in ('activity','activity_repo','team_first','repo','team')}
 SEAT=re.compile(r'^([a-z0-9]+(?:-[a-z0-9]+)*?)-g(\d+)-(\d+)$')
 WAIT={'mcp__director__wait_for_message','mcp__director__inbox_summary'}
-ROLES=['research-supervisor','supervisor','builder','reviewer','test-architect','architect','envoy','author','critic']
+ROLES=['research-supervisor','supervisor','builder','reviewer','test-architect','architect','envoy','author','critic',
+       'filer','maintainer','monitor','reader','writer','worker','editor','analyst','retrospector','introspector','sweeper',
+       'fact-checker','merge-queue','researcher','director','lead','screener','panelist']
 HARNESS=('claude','codex','opencode','crush','goose')
 LAUNCH=re.compile(r"session [^/\s]+/(\S+) exec: .*'--session-id' '([0-9a-fA-F-]{36})'")
 def H(x): return hashlib.sha256((x or '').encode()).hexdigest()[:12]
 def parse_label(n):
     # (base, team, role) for a seat label, or None when it is not one. One trailing harness token ends the
-    # base first, so reviewer-reviewer-claude reads as team reviewer, role reviewer.
+    # base first, so reviewer-reviewer-claude reads as team reviewer, role reviewer. A name that merely looks like
+    # <words>-gN-M is a seat only when its role part is a word in ROLES (or it starts with dryrun-).
     mm=SEAT.match(n)
     if not mm: return None
-    b=mm.group(1); sb=b
+    b=mm.group(1); sb=re.sub(r'-f[0-9]+(f[0-9]+)*$','',b)   # one shard token (-f1, -f6f7) ends the base first
     for h in HARNESS:
         if sb.endswith('-'+h): sb=sb[:-len(h)-1]; break
-    role=next((x for x in ROLES if sb.endswith(x)),sb.split('-')[-1])
+    role=next((x for x in ROLES if sb==x or sb.endswith('-'+x)),None)
+    if role is None:
+        # Only a role word from ROLES makes a seat label; a dryrun- prefix is the one other accepted shape.
+        if not sb.startswith('dryrun-'): return None
+        role=sb.split('-')[-1]
     team=sb[:-len(role)-1] if len(sb)>len(role) else '-'
     if team.endswith('-'+role): team=team[:-len(role)-1]
     return (b,team,role)
@@ -143,7 +152,7 @@ def act(e,role,cls):
     if e['side']: return 'subagent work'
     if e['tools'] and e['tools']<=WAIT: return 'hub wait (bus polling)'
     if role=='-': return cls
-    return {'builder':'building','reviewer':'review','research-supervisor':'research','supervisor':'supervision and relay','filer':'filing','maintainer':'maintenance','architect':'design','test-architect':'design','author':'design','envoy':'triage','critic':'review'}.get(role,'other seat roles')
+    return {'builder':'building','reviewer':'review','research-supervisor':'research','supervisor':'supervision and relay','filer':'filing','maintainer':'maintenance','architect':'design','test-architect':'design','author':'design','envoy':'triage','critic':'review','reader':'research','analyst':'research','retrospector':'research','introspector':'research','writer':'design','editor':'design','worker':'building','fact-checker':'review','sweeper':'maintenance','researcher':'research','director':'supervision and relay','lead':'supervision and relay','screener':'review','panelist':'design'}.get(role,'other seat roles')
 _rc={}
 GITENV={k:v for k,v in os.environ.items() if not k.startswith('GIT_')}
 def git(d,*a):
@@ -189,12 +198,13 @@ def uclass(sid):
     if sid in _cc: return _cc[sid]
     k=tilde(first.get(sid,('',''))[1])
     orch=next((v for rx,v in ORCHR if rx.search(k)),None)
-    prules=[v for rx,v in OWNR if rx.search(k)]; own=bool(prules)
+    prules=[v for rx,v in OWNR if rx.search(k)]
     srules=[OWNSKILL[x] for x in sorted(skills.get(sid,set())&set(OWNSKILL))]
+    own=bool(prules) or bool(srules)
     rule='+'.join(dict.fromkeys(prules+srules))
     tc=toolcalls[sid]
     dr=[x for x,hit in (('skill','director' in skills.get(sid,set())),('mcp-majority',bool(tc['n']) and 2*tc['director']>tc['n'])) if hit]
-    if own or srules: c=C_OWN
+    if own: c=C_OWN
     elif orch is not None: c=C_DIR if dr else C_ORCH
     else: c=C_NONE
     _cc[sid]=(c,rollup(k,orch,own),rule if c==C_OWN else '','+'.join(dr) if c==C_DIR else ''); return _cc[sid]
