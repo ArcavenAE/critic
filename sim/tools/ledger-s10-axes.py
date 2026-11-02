@@ -30,7 +30,7 @@
 # launch-log or none. A session with no seat is split by rule, in this order, and nothing is classed as
 # operator work without a positive rule: own (kind own or own_skill), external orchestration (kind
 # orchestrator), else "no seat name (unattributed)". A harness token (-claude, -codex, -opencode, -crush,
-# -goose) ends a seat base before the role is matched. A label is a seat only when its role part is a word in
+# -goose) and one shard token (-f1, -f6f7), in either order, end a seat base before the role is matched. A label is a seat only when its role part is a word in
 # ROLES (generic role words; a host whose role words are outside the list sees those seats as unattributed, a
 # known limit) or it starts with dryrun-; any other agent name is "agent-name (not a seat)". unattributed-sessions.csv rolls each project dir up to
 # an orchestrator name, own, temp or home; it never prints a raw path. Every CSV ends its lines with a bare
@@ -45,7 +45,7 @@
 # guess the address can confirm it, so it is a pseudonym and not safe to publish. Writes aggregates only, no transcript text.
 import json,glob,os,re,collections,csv,sys,gzip,hashlib
 from datetime import datetime
-out=sys.argv[1]; P=json.load(open(sys.argv[2])); CLUSTER=sys.argv[3]; MAPF=sys.argv[4]
+out=sys.argv[1]; os.makedirs(out,exist_ok=True); P=json.load(open(sys.argv[2])); CLUSTER=sys.argv[3]; MAPF=sys.argv[4]
 root=os.path.expanduser(sys.argv[5] if len(sys.argv)>5 else '~/.claude/projects')
 LOGDIR=os.path.expanduser(sys.argv[6] if len(sys.argv)>6 else '~/.marvel/log')
 import subprocess
@@ -72,9 +72,13 @@ def parse_label(n):
     # <words>-gN-M is a seat only when its role part is a word in ROLES (or it starts with dryrun-).
     mm=SEAT.match(n)
     if not mm: return None
-    b=mm.group(1); sb=re.sub(r'-f[0-9]+(f[0-9]+)*$','',b)   # one shard token (-f1, -f6f7) ends the base first
-    for h in HARNESS:
-        if sb.endswith('-'+h): sb=sb[:-len(h)-1]; break
+    b=mm.group(1); sb=b; shard=harness=False
+    for _ in (0,1):   # one shard token (-f1, -f6f7) and one harness token end the base, in either order
+        if not shard:
+            t=re.sub(r'-f[0-9]+(f[0-9]+)*$','',sb); shard=(t!=sb); sb=t
+        if not harness:
+            for h in HARNESS:
+                if sb.endswith('-'+h): sb=sb[:-len(h)-1]; harness=True; break
     role=next((x for x in ROLES if sb==x or sb.endswith('-'+x)),None)
     if role is None:
         # Only a role word from ROLES makes a seat label; a dryrun- prefix is the one other accepted shape.
