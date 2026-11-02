@@ -2,7 +2,7 @@
 # Tests for ledger-s10-axes.py. Runs the script end to end over invented transcripts, an invented map and an
 # invented marvel log, so nothing here reads a real home directory.
 # Run: python3 -I sim/tools/test_ledger_s10_axes.py
-import csv, gzip, json, os, shutil, subprocess, sys, tempfile, unittest, hashlib
+import concurrent.futures, csv, glob, gzip, json, os, shutil, subprocess, sys, tempfile, unittest, hashlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, 'ledger-s10-axes.py')
@@ -71,7 +71,7 @@ def run(script, sessions, launch_lines=(), gz_lines=(), prices=None, mkout=True,
                             os.path.join(d, 'map.csv'), os.path.join(d, 'cfg', 'projects'), logd],
                            capture_output=True, text=True, env=env)
         assert r.returncode == 0, r.stderr
-        res = {'_cr': []}
+        res = {'_cr': [], '_stderr': r.stderr}
         for f in os.listdir(out):
             with open(os.path.join(out, f), 'rb') as fh:
                 if b'\r' in fh.read():
@@ -449,6 +449,102 @@ class T(unittest.TestCase):
         self.assertEqual([r['repo'] for r in res['by-repo.csv']], ['unknown'])
         self.assertFalse(os.path.exists(cache))
         self.assertFalse(any('cache' in f for f in res))
+
+    # Round 1 fixes: live git wins while the path exists, a bad sidecar is moved aside, concurrent writers keep each other's rows.
+    GIT = ['git', '-c', 'user.name=demo', '-c', 'user.email=demo@example.test']
+
+    def make_repo(self, d, name, origin):
+        main = os.path.join(d, name)
+        for cmd in (self.GIT + ['init', '-q', main], self.GIT + ['-C', main, 'commit', '-q', '--allow-empty', '-m', 'init'],
+                    self.GIT + ['-C', main, 'remote', 'add', 'origin', 'https://example.test/%s.git' % origin]):
+            subprocess.run(cmd, check=True, capture_output=True)
+        return main
+
+    def add_wt(self, main, path):
+        subprocess.run(self.GIT + ['-C', main, 'worktree', 'add', '-q', path, '-b', 'b' + str(abs(hash(path)))], check=True, capture_output=True)
+
+    def rm_wt(self, main, path):
+        subprocess.run(self.GIT + ['-C', main, 'worktree', 'remove', '--force', path], check=True, capture_output=True)
+
+    def two_sessions(self, script, cwd, cache):
+        s = [('s1', None, [rec('s1', 310, cwd=cwd)]), ('s2', None, [rec('s2', 311, cwd=cwd)])]
+        return sorted((r['repo'], r['requests']) for r in run(script, s, cache=cache)['by-repo.csv'])
+
+    def reused_path(self, script):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        a = self.make_repo(d, 'main-a', 'demo-org/repo-a'); bb = self.make_repo(d, 'main-b', 'demo-org/repo-b')
+        slot = os.path.join(d, 'slot1'); cache = os.path.join(d, 'cache.csv')
+        self.add_wt(a, slot)
+        first = self.two_sessions(script, slot, cache)
+        self.rm_wt(a, slot)
+        self.add_wt(bb, slot)       # the same path, now a worktree of another repo
+        second = self.two_sessions(script, slot, cache)
+        self.rm_wt(bb, slot)
+        third = self.two_sessions(script, slot, cache)   # path gone: the sidecar holds the latest repo
+        return first, second, third
+
+    def test_reused_path_follows_the_live_repo(self):
+        first, second, third = self.reused_path(SCRIPT)
+        self.assertEqual(first, [('demo-org/repo-a', '2')])
+        self.assertEqual(second, [('demo-org/repo-b', '2')])
+        self.assertEqual(third, [('demo-org/repo-b', '2')])
+
+    def test_reused_path_mutant_that_reads_the_cache_first_turns_red(self):
+        m = self.mutant("    if v is None and cwd and os.path.isdir(cwd):", "    if v is None and cwd and cwd not in RCACHE and os.path.isdir(cwd):")
+        self.assertEqual(self.reused_path(m)[1], [('demo-org/repo-a', '2')])
+
+    def bad_sidecar(self, script):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        main = self.make_repo(d, 'main-a', 'demo-org/repo-a'); wt = os.path.join(d, 'wt1'); self.add_wt(main, wt)
+        cache = os.path.join(d, 'cache.csv')
+        bad = 'cwd,repo,first_seen\n/srv/demo-old/x,demo-org/old,2026-10-01T00:00:00+00:00\n/srv/demo-nul/\x00y,demo-org/nul,2026-10-01T00:00:00+00:00\n'
+        with open(cache, 'w') as fh:
+            fh.write(bad)
+        res = run(script, [('w1', None, [rec('w1', 320, cwd=wt)])], cache=cache)
+        return d, cache, bad, res
+
+    def test_unparsable_sidecar_is_moved_aside_not_replaced(self):
+        d, cache, bad, res = self.bad_sidecar(SCRIPT)
+        aside = glob.glob(cache + '.bad-*')
+        self.assertEqual(len(aside), 1)
+        with open(aside[0]) as fh:
+            self.assertEqual(fh.read(), bad)
+        self.assertEqual(len([l for l in res['_stderr'].splitlines() if l.strip()]), 1)
+        self.assertIn('moved aside', res['_stderr'])
+        with open(cache) as fh:
+            self.assertEqual([r['repo'] for r in csv.DictReader(fh)], ['demo-org/repo-a'])
+        self.assertEqual([r['repo'] for r in res['by-repo.csv']], ['demo-org/repo-a'])
+
+    def test_sidecar_mutant_that_does_not_move_it_aside_turns_red(self):
+        m = self.mutant("    try: os.replace(path,aside)\n", "    try: pass\n")
+        d, cache, bad, res = self.bad_sidecar(m)
+        self.assertEqual(glob.glob(cache + '.bad-*'), [])
+
+    def concurrent_rows(self, script, writers=12):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        cache = os.path.join(d, 'cache.csv')
+        cwds = [self.make_repo(d, 'r%d' % i, 'demo-org/r%d' % i) for i in range(writers)]
+        def one(c):
+            return run(script, [('c1', None, [rec('c1', 330, cwd=c)])], cache=cache)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=writers) as ex:
+            list(ex.map(one, cwds))
+        with open(cache) as fh:
+            return sorted(r['cwd'] for r in csv.DictReader(fh)), sorted(cwds)
+
+    def test_concurrent_runs_keep_each_others_rows(self):
+        got, want = self.concurrent_rows(SCRIPT)
+        self.assertEqual(got, want)
+
+    def test_concurrent_mutant_that_writes_its_own_snapshot_turns_red(self):
+        m = self.mutant("            cur,why=read_repo_cache(CACHEF)\n", "            cur,why=dict(RCACHE),None\n")
+        for _ in range(5):
+            got, want = self.concurrent_rows(m)
+            if got != want:
+                return
+        self.fail('the mutant lost no row in 5 rounds of 12 writers')
 
     def test_price_files(self):
         def sha(f):
