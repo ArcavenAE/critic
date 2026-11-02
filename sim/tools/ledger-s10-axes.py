@@ -62,7 +62,7 @@ SEAT=re.compile(r'^([a-z0-9]+(?:-[a-z0-9]+)*?)-g(\d+)-(\d+)$')
 WAIT={'mcp__director__wait_for_message','mcp__director__inbox_summary'}
 ROLES=['research-supervisor','supervisor','builder','reviewer','test-architect','architect','envoy','author','critic',
        'filer','maintainer','monitor','reader','writer','worker','editor','analyst','retrospector','introspector','sweeper',
-       'fact-checker','merge-queue']
+       'fact-checker','merge-queue','researcher','director','lead','screener','panelist']
 HARNESS=('claude','codex','opencode','crush','goose')
 LAUNCH=re.compile(r"session [^/\s]+/(\S+) exec: .*'--session-id' '([0-9a-fA-F-]{36})'")
 def H(x): return hashlib.sha256((x or '').encode()).hexdigest()[:12]
@@ -72,7 +72,7 @@ def parse_label(n):
     # <words>-gN-M is a seat only when its role part is a word in ROLES (or it starts with dryrun-).
     mm=SEAT.match(n)
     if not mm: return None
-    b=mm.group(1); sb=b
+    b=mm.group(1); sb=re.sub(r'-f[0-9]+(f[0-9]+)*$','',b)   # one shard token (-f1, -f6f7) ends the base first
     for h in HARNESS:
         if sb.endswith('-'+h): sb=sb[:-len(h)-1]; break
     role=next((x for x in ROLES if sb==x or sb.endswith('-'+x)),None)
@@ -152,7 +152,7 @@ def act(e,role,cls):
     if e['side']: return 'subagent work'
     if e['tools'] and e['tools']<=WAIT: return 'hub wait (bus polling)'
     if role=='-': return cls
-    return {'builder':'building','reviewer':'review','research-supervisor':'research','supervisor':'supervision and relay','filer':'filing','maintainer':'maintenance','architect':'design','test-architect':'design','author':'design','envoy':'triage','critic':'review','reader':'research','analyst':'research','retrospector':'research','introspector':'research','writer':'design','editor':'design','worker':'building','fact-checker':'review','sweeper':'maintenance'}.get(role,'other seat roles')
+    return {'builder':'building','reviewer':'review','research-supervisor':'research','supervisor':'supervision and relay','filer':'filing','maintainer':'maintenance','architect':'design','test-architect':'design','author':'design','envoy':'triage','critic':'review','reader':'research','analyst':'research','retrospector':'research','introspector':'research','writer':'design','editor':'design','worker':'building','fact-checker':'review','sweeper':'maintenance','researcher':'research','director':'supervision and relay','lead':'supervision and relay','screener':'review','panelist':'design'}.get(role,'other seat roles')
 _rc={}
 GITENV={k:v for k,v in os.environ.items() if not k.startswith('GIT_')}
 def git(d,*a):
