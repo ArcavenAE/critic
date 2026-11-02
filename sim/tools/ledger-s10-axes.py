@@ -29,7 +29,9 @@
 # operator work without a positive rule: own (kind own or own_skill), external orchestration (kind
 # orchestrator), else "no seat name (unattributed)". A harness token (-claude, -codex, -opencode, -crush,
 # -goose) ends a seat base before the role is matched. unattributed-sessions.csv rolls each project dir up to
-# an orchestrator name, own, temp or home; it never prints a raw path. Writes aggregates only, no transcript text.
+# an orchestrator name, own, temp or home; it never prints a raw path. signin_hash in attribution-meta.txt is
+# an unsalted 12-hex sha256 of the lowercased address: it tells two config dirs apart, and anyone who can
+# guess the address can confirm it, so it is a pseudonym and not safe to publish. Writes aggregates only, no transcript text.
 import json,glob,os,re,collections,csv,sys,gzip,hashlib
 from datetime import datetime
 out=sys.argv[1]; P=json.load(open(sys.argv[2])); CLUSTER=sys.argv[3]; MAPF=sys.argv[4]
@@ -160,10 +162,10 @@ for e in msgs.values():
     if e['sid'] not in first or e['ts']<first[e['sid']][0]: first[e['sid']]=(e['ts'],e['cwd'])
 _cc={}
 def rollup(k,orch,own):
-    # A project dir is never printed raw: an orchestrator rule names it, an own rule says 'own', a temp or
-    # scratch path says 'temp', anything else says 'home'.
-    if orch is not None: return orch
+    # A project dir is never printed raw: an own rule says 'own' (checked first, as uclass() does), an
+    # orchestrator rule names it, a temp or scratch path says 'temp', anything else says 'home'.
     if own: return 'own'
+    if orch is not None: return orch
     if re.match(r'^(/tmp/|/private/tmp/|/var/folders/|/private/var/folders/)',k) or 'scratchpad' in k: return 'temp'
     return 'home'
 def uclass(sid):
@@ -227,6 +229,7 @@ def signin():
     return 'none'
 with open(out+'/attribution-meta.txt','w') as fh:
     for m in ('agent-name','launch-log','none'): fh.write('requests_%s=%d\n'%(m.replace('-','_'),bymethod[m]))
+    fh.write('# signin_hash is an unsalted 12-hex pseudonym of the signed-in address, not safe to publish\n')
     fh.write('signin_hash=%s\n'%signin())
 tot=collections.Counter()
 for c in rows.values(): tot.update(c)
