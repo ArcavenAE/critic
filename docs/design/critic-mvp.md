@@ -65,8 +65,9 @@ Three consequences for this design. The run marker is optional enrichment: every
 | `outcome` | accepted count, scenario pass rate, canary hit. The protocol plants the canary; critic only reads the hit | the primary's denominator |
 | `ledger`, `cost` | path and sha256 of each derived output | reproducibility |
 | `metrics` | the schema's Dolt-layer field, unchanged: open JSON. It describes the workload, never critic | everything else |
+| `readers` | the readers that ran on this run, by name: a list of strings. A reader that did not run, or ran blind, has a row in `gaps` instead, so each reader the protocol names appears in `readers`, in `gaps`, or in both | component 1 checks the `gaps` clause against it |
 | `observer` | critic's own footprint on the run: the files and bytes it read, and the tokens and time it spent itself. Kept apart from `metrics` | a reader of the numbers can see what measuring them cost |
-| `gaps` | per reader, what it could not see and why: a list of `{reader, what, why}`. An empty list means nothing was missed by the readers that ran, not that none was skipped; a record whose reader list and `gaps` do not account for every reader is refused | a missing source reads as missing, never as zero or a pass |
+| `gaps` | per reader, what it could not see and why: a list of `{reader, what, why}`. An empty list means nothing was missed by the readers that ran, not that none was skipped; a record whose `readers` list and `gaps` do not account for every reader is refused | a missing source reads as missing, never as zero or a pass |
 | `kos_finding` | the schema's Dolt-layer field, unchanged: the finding a run graduated into | the harvest link |
 
 **What never enters the record:**
