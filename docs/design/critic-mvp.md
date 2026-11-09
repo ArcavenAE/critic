@@ -37,6 +37,10 @@ So run-sync would discover nothing today: no property to query, and no marker to
 
 ## 3. The run record
 
+**Separation rule.** critic measures a workload from outside it and never reaches into it. It reads what the workload and its harness leave behind (transcripts, git history, session files, telemetry the host already emits) and writes only to its own store. It does not plant markers, canaries or probes in the workload, does not run inside a measured session, and does not depend on the workload writing anything for it. What a reader cannot see is recorded as a gap, never as a value.
+
+Three consequences for this design. The run marker is optional enrichment: every field component 1 needs has a source outside the workload (a list critic is given, the git history of the locus, the session files), and `critic run register` takes those. The Phase 0 skills under `skills/` run only from a session outside the workload; moving them into critic's CLI is deferred, and nothing is built for it now. The protocol plants the canary, and critic only reads the canary hit as an outcome.
+
 **One record per run.** A run is one execution that critic measures or indexes: a factory session set on a test project, a seed run, or a legion repository. Its fields extend the run-marker schema (`docs/run-marker-schema.md`), both its marker layer and its Dolt layer, and do not replace it. Every schema field keeps its meaning, and every value the schema defines keeps its meaning. One field gains a value: `kind` adds `trial`, which exists in the record only. The schema's kinds are unchanged, and a `.run.yaml` marker cannot carry `trial` unless the schema adds it in a change of its own. The fields below are new, except where a row says it is the schema's.
 
 | field | meaning | consumer use |
@@ -58,9 +62,11 @@ So run-sync would discover nothing today: no property to query, and no marker to
 | `run_state` | the execution's state, a new field: `started`, `completed`, `stalled`, `crashed`, `timed-out`, `limit-stopped` or `void` | intent-to-treat keeps every state except `void` |
 | `void_rule` | the protocol rule that set `void`, by its section; required when `run_state` is `void`, and empty otherwise | a void is never unexplained |
 | `host_class` | the role of the host the run used (for example, probe host), never its name | the fairness pins |
-| `outcome` | accepted count, scenario pass rate, canary hit | the primary's denominator |
+| `outcome` | accepted count, scenario pass rate, canary hit. The protocol plants the canary; critic only reads the hit | the primary's denominator |
 | `ledger`, `cost` | path and sha256 of each derived output | reproducibility |
-| `metrics` | the schema's Dolt-layer field, unchanged: open JSON | everything else |
+| `metrics` | the schema's Dolt-layer field, unchanged: open JSON. It describes the workload, never critic | everything else |
+| `observer` | critic's own footprint on the run: the files and bytes it read, and the tokens and time it spent itself. Kept apart from `metrics` | a reader of the numbers can see what measuring them cost |
+| `gaps` | per reader, what it could not see and why: a list of `{reader, what, why}`. An empty list means nothing was missed by the readers that ran, not that none was skipped; a record whose reader list and `gaps` do not account for every reader is refused | a missing source reads as missing, never as zero or a pass |
 | `kos_finding` | the schema's Dolt-layer field, unchanged: the finding a run graduated into | the harvest link |
 
 **What never enters the record:**
@@ -117,13 +123,13 @@ Each ships as a red/green draft PR on critic with its tests.
 2. **The transcript ledger reader:** the probe brief's section 10, outputs 1 to 8:
    - dedupe by `message.id`;
    - cold start and cache death as defined there;
-   - a hand-counted fixture that reads back exactly, and the OTEL reconcile at 1% per class.
+   - a hand-counted fixture that reads back exactly, and the OTEL reconcile at 1% per class, run only when the workload emitted OTEL: a run without it records a gap, never a pass.
    - It reads transcripts and writes a ledger file. It does not need component 1, so it can start at once.
    - Blocks 3.
 3. **The cost meter:** the probe brief's section 11:
    - a frozen price table;
    - cost by token class;
-   - OTEL-only request sources priced as their own row.
+   - OTEL-only request sources priced as their own row, present only when OTEL exists: a run without it records a gap, never a zero.
    - Blocks 4.
 4. **The paired comparison:**
    - the delta-method interval on the log ratio of sums, blocked by pair, with the bootstrap over pairs as a sensitivity;
