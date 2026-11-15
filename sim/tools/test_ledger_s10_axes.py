@@ -431,6 +431,46 @@ class T(unittest.TestCase):
         self.assertEqual(cls, {self.IR: 1, self.RESIDUAL: 2})
         self.assertEqual(inh, {(self.IR, 'direct'): 1, (self.RESIDUAL, 'none'): 2})
 
+    HUB, DIRACT = 'hub wait (bus polling)', 'director sessions (coordination)'
+    REQ = (10 + 100 + 5) * 10000    # micro-dollars of one fixture request: input, cache read and output tokens at 10000 each
+
+    def bridge_run(self, script=None):
+        W = 'mcp__director__wait_for_message'
+        sessions = [('b1', 'acme-builder-claude-g1-0', [rec('b1', 601, tools=[W]), rec('b1', 602, tools=[W])]),
+                    ('ds', None, [rec_use('ds', 610, [W]), rec_use('ds', 611, [W]), rec_use('ds', 612, [W]),
+                                  rec_use('ds', 613, [self.SEND])])]
+        res = run(script or SCRIPT, sessions)
+        b = {(r['line'], r['row']): (int(r['requests']), int(r['usd_micro'])) for r in (res.get('director-wait-bridge.csv') or [])}
+        act = collections.Counter()
+        for r in res['axes-rows.csv']:
+            act[r['activity']] += int(r['requests'])
+        return b, act
+
+    MOVED = 'moved from hub wait to director sessions'
+
+    def test_director_waits_move_out_of_hub_wait_with_a_bridge_that_balances_to_the_micro_dollar(self):
+        b, act = self.bridge_run()
+        R = self.REQ
+        self.assertEqual(b, {('memo', self.HUB): (5, 5 * R), ('memo', self.DIRACT): (1, R),
+                             ('new', self.HUB): (2, 2 * R), ('new', self.DIRACT): (4, 4 * R),
+                             ('bridge', self.MOVED): (3, 3 * R)})
+        # new rows plus the bridge equal the old rows, and the two totals are equal
+        self.assertEqual(b[('new', self.HUB)][1] + b[('bridge', self.MOVED)][1], b[('memo', self.HUB)][1])
+        self.assertEqual(b[('new', self.DIRACT)][1] - b[('bridge', self.MOVED)][1], b[('memo', self.DIRACT)][1])
+        self.assertEqual(act[self.HUB], 2)
+        self.assertEqual(act[self.DIRACT], 4)
+
+    def test_a_tool_use_block_without_an_id_is_keyed_by_its_message_too(self):
+        # No id and no uuid on any record: the key must still tell the three messages apart. Counted once each, the
+        # session holds two director calls of three and is a director session; keyed by position alone it holds one call.
+        def r(n, name):
+            return {'type': 'assistant', 'timestamp': '2026-10-05T10:00:00Z', 'sessionId': 'dn', 'cwd': '/srv/demo-orch/x',
+                    'requestId': 'r%s' % n, 'message': {'id': 'm%s' % n, 'model': MODEL, 'content': [{'type': 'tool_use', 'name': name}],
+                    'usage': {'input_tokens': 10, 'output_tokens': 5, 'cache_read_input_tokens': 100, 'cache_creation_input_tokens': 0}}}
+        s = [('dn', None, [r(701, 'Bash'), r(702, self.SEND), r(703, self.SEND)])]
+        rows = {x['session_hash']: (x['class'], x['director_rule']) for x in run(SCRIPT, s)['unattributed-sessions.csv']}
+        self.assertEqual(rows, {hashlib.sha256(b'dn').hexdigest()[:12]: (self.DIR, 'mcp-majority')})
+
     def test_inheritance_mutants_turn_red(self):
         cases = [([('ds', [(1, [self.SEND]), (2, []), (3, [self.ROSTER])])]),
                  ([('ds', [(1, []), (2, [self.ROSTER]), (3, [self.SEND])])]),
