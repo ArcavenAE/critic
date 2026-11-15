@@ -390,6 +390,20 @@ class T(unittest.TestCase):
         self.assertEqual(got, {self.MG: 1, self.DO: 1})
         self.assertNotIn('SECRETWORD123', json.dumps(res))
 
+    def test_signature_mutants_turn_red(self):
+        fx = self.sig_fixtures()
+        want = collections.Counter(c for c, _ in fx)
+        want[self.DO] += 1
+        for a, b in (("for s in SEGSPLIT.split(cmd):", "for s in [cmd]:"),
+                     ("w[0]=w[0].rsplit('/',1)[-1]; res.append", "res.append"),
+                     ("while w and w[0] in ('do','then','else','{','(','!'): w=w[1:]", "pass"),
+                     ("    for cl,v in DSIG:\n", "    for cl,v in reversed(DSIG):\n"),
+                     ("if all(clause_hits(c,blocks) for c in cl)", "if any(clause_hits(c,blocks) for c in cl)"),
+                     ("return bool(names) and set(names)<=set(arg.split('|'))", "return bool(set(names)&set(arg.split('|')))"),
+                     ("return bool(w) and any(s[:len(w)]==w", "return bool(w) and any(w[0] in s")):
+            res, got = self.sig_run(fx, self.sig_rows(), script=self.mutant(a, b))
+            self.assertNotEqual(got, dict(want), a)
+
     def test_the_table_version_is_printed_by_every_audit(self):
         res, _ = self.sig_run([], self.sig_rows('7'))
         self.assertIn('director_sig_version=7\n', res['attribution-meta.txt'])
