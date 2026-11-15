@@ -390,6 +390,47 @@ class T(unittest.TestCase):
         self.assertEqual(got, {self.MG: 1, self.DO: 1})
         self.assertNotIn('SECRETWORD123', json.dumps(res))
 
+    RESIDUAL = 'no class (no tool call in the session)'
+    SEND, ROSTER = 'mcp__director__send_message', 'mcp__director__list_roster'
+
+    def inherit_run(self, files, script=None):
+        """files: list of (file name, [(second, uses)]); every request belongs to one director session, ds, which is
+        a director session by tool-call majority. A request with an empty uses list is text-only."""
+        sessions = []
+        n = 500
+        for fname, reqs in files:
+            recs = []
+            for sec, uses in reqs:
+                n += 1
+                recs.append(rec_use('ds', n, uses, ts='2026-10-05T10:00:%02dZ' % sec))
+            sessions.append((fname, None, recs))
+        res = run(script or SCRIPT, sessions, maprows=self.sig_rows())
+        cls = {r['class']: int(r['requests']) for r in (res.get('by-director-class.csv') or [])}
+        inh = {(r['class'], r['direction']): int(r['requests']) for r in (res.get('by-director-inheritance.csv') or [])}
+        return cls, inh
+
+    def test_a_text_only_request_takes_the_class_of_the_next_tool_request(self):
+        # stream order: send_message, text only, list_roster. The text-only request is between them and takes the next.
+        cls, inh = self.inherit_run([('ds', [(1, [self.SEND]), (2, []), (3, [self.ROSTER])])])
+        self.assertEqual(cls, {self.IR: 1, self.FR: 2})
+        self.assertEqual(inh, {(self.IR, 'direct'): 1, (self.FR, 'direct'): 1, (self.FR, 'next'): 1})
+
+    def test_a_leading_text_only_request_takes_the_next_class_not_a_previous_one(self):
+        cls, inh = self.inherit_run([('ds', [(1, []), (2, [self.ROSTER]), (3, [self.SEND])])])
+        self.assertEqual(cls, {self.FR: 2, self.IR: 1})
+        self.assertEqual(inh, {(self.FR, 'direct'): 1, (self.FR, 'next'): 1, (self.IR, 'direct'): 1})
+
+    def test_a_trailing_text_only_request_takes_the_previous_class(self):
+        cls, inh = self.inherit_run([('ds', [(1, [self.SEND]), (2, [self.SEND]), (3, [])])])
+        self.assertEqual(cls, {self.IR: 3})
+        self.assertEqual(inh, {(self.IR, 'direct'): 2, (self.IR, 'previous'): 1})
+
+    def test_a_stream_with_no_tool_request_takes_the_residual(self):
+        # file dsb holds only text-only requests of session ds; the tool calls that make ds a director session are in file ds.
+        cls, inh = self.inherit_run([('ds', [(1, [self.SEND])]), ('dsb', [(2, []), (3, [])])])
+        self.assertEqual(cls, {self.IR: 1, self.RESIDUAL: 2})
+        self.assertEqual(inh, {(self.IR, 'direct'): 1, (self.RESIDUAL, 'none'): 2})
+
     def test_signature_mutants_turn_red(self):
         fx = self.sig_fixtures()
         want = collections.Counter(c for c, _ in fx)
