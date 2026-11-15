@@ -431,6 +431,21 @@ class T(unittest.TestCase):
         self.assertEqual(cls, {self.IR: 1, self.RESIDUAL: 2})
         self.assertEqual(inh, {(self.IR, 'direct'): 1, (self.RESIDUAL, 'none'): 2})
 
+    def test_inheritance_mutants_turn_red(self):
+        cases = [([('ds', [(1, [self.SEND]), (2, []), (3, [self.ROSTER])])]),
+                 ([('ds', [(1, []), (2, [self.ROSTER]), (3, [self.SEND])])]),
+                 ([('ds', [(1, [self.SEND]), (2, [self.SEND]), (3, [])])]),
+                 ([('ds', [(1, [self.SEND])]), ('dsb', [(2, []), (3, [])])]),
+                 ([('ds', [(1, [self.SEND]), (2, []), (3, []), (4, [self.ROSTER])])])]
+        good = [self.inherit_run(c) for c in cases]
+        for a, b in (("            if own[i] is not None: nxt=own[i]\n", "            nxt=own[i]\n"),
+                     ("elif nx[i] is not None: e['dclass'],e['dsrc']=nx[i],'next'", "elif prv is not None: e['dclass'],e['dsrc']=prv,'previous'"),
+                     ("            elif prv is not None: e['dclass'],e['dsrc']=prv,'previous'\n", "            elif False: pass\n"),
+                     ("else: e['dclass'],e['dsrc']=RESIDUAL,'none'", "else: e['dclass'],e['dsrc']='unclassed','none'"),
+                     ("for i in range(len(L)-1,-1,-1):", "for i in range(len(L)):")):
+            m = self.mutant(a, b)
+            self.assertNotEqual([self.inherit_run(c, m) for c in cases], good, a)
+
     def test_signature_mutants_turn_red(self):
         fx = self.sig_fixtures()
         want = collections.Counter(c for c, _ in fx)
