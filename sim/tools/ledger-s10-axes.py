@@ -112,7 +112,7 @@ for lf in sorted(glob.glob(LOGDIR+'/daemon.log*')):
                 m=LAUNCH.search(line)
                 if m: launch[m.group(2).lower()]=m.group(1)
     except Exception: continue
-names={}; msgs={}; rid_n=set(); recs=0; skills=collections.defaultdict(set); toolcalls=collections.defaultdict(collections.Counter)
+names={}; msgs={}; rid_n=set(); recs=0; skills=collections.defaultdict(set); toolcalls=collections.defaultdict(collections.Counter); seen_tu=set()
 for f in glob.glob(root+'/**/*.jsonl',recursive=True):
     sub='/subagents/' in f
     with open(f,'rb') as fh:
@@ -129,12 +129,17 @@ for f in glob.glob(root+'/**/*.jsonl',recursive=True):
             tools={b.get('name') for b in (m.get('content') or []) if isinstance(b,dict) and b.get('type')=='tool_use'}
             for b in (m.get('content') or []):
                 if isinstance(b,dict) and b.get('type')=='tool_use' and b.get('name')=='Skill' and isinstance(b.get('input'),dict) and b['input'].get('skill'): skills[r.get('sessionId')].add(str(b['input']['skill']))
+            # Tool calls are counted from every record of a message, once per tool_use id, because one message's content
+            # can arrive over several records. A block with no id counts once per record.
+            for i,b in enumerate(m.get('content') or []):
+                if isinstance(b,dict) and b.get('type')=='tool_use':
+                    key=(mid,b['id']) if b.get('id') else ('noid',r.get('uuid'),i)
+                    if key in seen_tu: continue
+                    seen_tu.add(key)
+                    toolcalls[r.get('sessionId')]['n']+=1
+                    if str(b.get('name') or '').startswith('mcp__director__'): toolcalls[r.get('sessionId')]['director']+=1
             e=msgs.get(mid)
             if e is None:
-                for b in (m.get('content') or []):
-                    if isinstance(b,dict) and b.get('type')=='tool_use':
-                        toolcalls[r.get('sessionId')]['n']+=1
-                        if str(b.get('name') or '').startswith('mcp__director__'): toolcalls[r.get('sessionId')]['director']+=1
                 e=msgs[mid]={'cwd':r.get('cwd') or '','ts':ts,'model':m.get('model'),'sid':r.get('sessionId'),'stream':f,'side':bool(r.get('isSidechain')) or sub,
                   'in':u.get('input_tokens') or 0,'cr':u.get('cache_read_input_tokens') or 0,'cw':u.get('cache_creation_input_tokens') or 0,
                   'cw5':cc.get('ephemeral_5m_input_tokens'),'cw1':cc.get('ephemeral_1h_input_tokens') or 0,'out':u.get('output_tokens') or 0,

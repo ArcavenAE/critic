@@ -285,6 +285,12 @@ class T(unittest.TestCase):
         got, want = self.split_message_classes(SCRIPT)
         self.assertEqual(got, want)
 
+    def test_by_id_counting_mutants_turn_red(self):
+        for a, b in (("if key in seen_tu: continue", "pass"),
+                     ("key=(mid,b['id']) if b.get('id') else ('noid',r.get('uuid'),i)", "key=('noid',r.get('uuid'),i)")):
+            got, want = self.split_message_classes(self.mutant(a, b))
+            self.assertNotEqual(got, want)
+
     def test_own_skill_rolls_up_to_own(self):
         s = [('k1', None, [rec('k1', 160, '/srv/demo-orch/x', skill='demo-coach')]),
              ('k2', None, [rec('k2', 161, '/srv/demo-fleet/y', skill='demo-coach')])]
