@@ -41,6 +41,16 @@ def rec(sid, n, cwd='/srv/demo-fleet/a', tools=(), skill=None, ts='2026-10-05T10
                       'cache_creation_input_tokens': 0}}}
 
 
+def rec_part(sid, n, part, uses, cwd='/srv/demo-orch/x', ts='2026-10-05T10:00:00Z'):
+    """One record of message n, whose content arrives over several records that share the message id.
+    uses: list of (tool_use id, tool name)."""
+    content = [{'type': 'tool_use', 'id': i, 'name': t} for i, t in uses]
+    return {'type': 'assistant', 'timestamp': ts, 'sessionId': sid, 'cwd': cwd, 'requestId': 'r%s' % n,
+            'uuid': 'u%s-%s' % (n, part), 'message': {'id': 'm%s' % n, 'model': MODEL, 'content': content,
+            'usage': {'input_tokens': 10, 'output_tokens': 5, 'cache_read_input_tokens': 100,
+                      'cache_creation_input_tokens': 0}}}
+
+
 def run(script, sessions, launch_lines=(), gz_lines=(), prices=None, mkout=True, cache=None):
     """sessions: list of (sid, agent_name or None, [records]). Returns {file: rows} from the output dir."""
     with tempfile.TemporaryDirectory() as d:
@@ -255,6 +265,25 @@ class T(unittest.TestCase):
                      ("bool(tc['n']) and 2*tc['director']>tc['n']", "False")):
             got, want = self.director_classes(self.mutant(a, b))
             self.assertNotEqual(got, want)
+
+    def split_message_classes(self, script):
+        mcp = 'mcp__director__send_message'
+        # d8: one message id over two records; the first holds a Bash call, the second two director calls.
+        # d9: one message id over two records; the second record repeats tool_use t1 and adds a Bash call.
+        s = [('d8', None, [rec_part('d8', 170, 0, [('t1', 'Bash')]),
+                           rec_part('d8', 170, 1, [('t2', mcp), ('t3', mcp)])]),
+             ('d9', None, [rec_part('d9', 171, 0, [('t1', mcp)]),
+                           rec_part('d9', 171, 1, [('t1', mcp), ('t2', 'Bash')])])]
+        h = lambda x: hashlib.sha256(x.encode()).hexdigest()[:12]
+        rows = {r['session_hash']: (r['class'], r['director_rule']) for r in run(script, s)['unattributed-sessions.csv']}
+        want = {h('d8'): (self.DIR, 'mcp-majority'), h('d9'): (self.ORCH, '')}
+        return rows, want
+
+    def test_tool_use_blocks_are_counted_by_id_across_the_records_of_a_message(self):
+        # d8 holds two director calls of three, so it is a director session only when the second record counts.
+        # d9 holds one director call of two once t1 is counted a single time; counted twice it would be two of three.
+        got, want = self.split_message_classes(SCRIPT)
+        self.assertEqual(got, want)
 
     def test_own_skill_rolls_up_to_own(self):
         s = [('k1', None, [rec('k1', 160, '/srv/demo-orch/x', skill='demo-coach')]),
