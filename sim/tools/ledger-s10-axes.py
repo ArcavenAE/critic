@@ -73,8 +73,10 @@
 # newline, not the csv module's CRLF default. A session whose agent-name is not a seat
 # label has method "agent-name (not a seat)"; no output carries an agent name. A session that would otherwise be
 # external orchestration is "director sessions (coordination)" when it calls the Skill tool with skill "director"
-# at least once, or more than half of its tool calls start with mcp__director__; the director_rule column of
-# unattributed-sessions.csv says which (skill, mcp-majority, or both joined by "+"). Reported beside external
+# at least once, or a user turn in the audit month holds a /director slash command (a <command-name>/director</command-name>
+# block), or more than half of its tool calls start with the director tool prefix, which has two spellings in the
+# transcripts, mcp__director__ and mcp__director-mcp__; the director_rule column of
+# unattributed-sessions.csv says which (skill, mcp-majority, or both joined by "+"; a slash command counts as skill). Reported beside external
 # orchestration and supervision and relay; no agent name is read for it. A model id with a trailing -YYYYMMDD date is priced at its undated id when only that is in
 # the price file. filer and maintainer seats are activities "filing" and "maintenance". signin_hash in attribution-meta.txt is
 # an unsalted 12-hex sha256 of the lowercased address: it tells two config dirs apart, and anyone who can
@@ -99,7 +101,7 @@ try: import fcntl
 except ImportError: fcntl=None
 from datetime import datetime,timezone
 MONTH=sys.argv[8] if len(sys.argv)>8 else '2026-10'
-if not re.fullmatch(r'\d{4}-(0[1-9]|1[0-2])',MONTH): sys.exit('month must be YYYY-MM, got %r'%MONTH)
+if not re.fullmatch(r'[0-9]{4}-(0[1-9]|1[0-2])',MONTH): sys.exit('month must be YYYY-MM, got %r'%MONTH)
 out=sys.argv[1]; os.makedirs(out,exist_ok=True); P=json.load(open(sys.argv[2])); CLUSTER=sys.argv[3]; MAPF=sys.argv[4]
 root=os.path.expanduser(sys.argv[5] if len(sys.argv)>5 else '~/.claude/projects')
 LOGDIR=os.path.expanduser(sys.argv[6] if len(sys.argv)>6 else '~/.marvel/log')
