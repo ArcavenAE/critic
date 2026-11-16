@@ -525,6 +525,15 @@ class T(unittest.TestCase):
                           'per ask closed': 'pending', 'per stall cleared': 'n/a'})
         self.assertTrue(t and '0' not in [r['unit_usd_micro'] for r in t.values()])
 
+    def test_unit_cost_mutants_turn_red(self):
+        counts = [('per relay', '2'), ('per operator decision', '0'), ('per stall cleared', '9')]   # per merge is absent
+        good = self.unit_run(counts)
+        for a, b in (("round(usd/cnt) if cnt else 'n/a'", "round(usd/cnt) if cnt else 0"),
+                     ("'pending' if val=='pending' else 'n/a'", "'n/a'"),
+                     ("usd=dirrows[val]['usd_micro'] if val in dirrows else 0", "usd=0"),
+                     ("cnt=UNIT_COUNTS.get(unit)", "cnt=UNIT_COUNTS.get(unit,1)")):
+            self.assertNotEqual(self.unit_run(counts, script=self.mutant(a, b)), good, a)
+
     def test_the_unit_table_is_data_so_a_rename_in_the_map_moves_the_label(self):
         units = [('unit_cost', 'per message passed on', 'intake and relay', 'relay-log entries')]
         t = self.unit_run([('per message passed on', '3')], units)

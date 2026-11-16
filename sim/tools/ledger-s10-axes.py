@@ -39,6 +39,10 @@
 #                  class (no tool call in the session)", a provisional name. by-director-inheritance.csv splits each class
 #                  by how its requests got it: direct, next, previous or none. The command text is read to match
 #                  and is never kept: only each segment's first three words and the bashtext needles that hit are held.
+# Unit costs: a unit_cost map row names a unit, its numerator class and its denominator's source. LEDGER_UNIT_COUNTS names a
+# CSV (unit,count; counts only) that supplies the denominators, which transcripts cannot. unit-costs.csv prints each unit's
+# cost in whole micro-dollars, or "n/a" with its source when the count is missing or zero, or "pending" for a unit whose
+# source is not built yet. A missing denominator never reads as 0.
 # Director's waiting: the director test runs before the hub-wait test, so a director session's requests whose tools are all
 # bus waits are "director sessions (coordination)" and not "hub wait (bus polling)". director-wait-bridge.csv prints the old
 # hub-wait and director rows as memo lines, the new rows, and a bridge row naming what moved, in whole micro-dollars; new
@@ -102,6 +106,22 @@ ORCHR=[(re.compile(m),v) for m,v in MAP['orchestrator']]
 # Director signature table: rows in map order, each a list of clauses that must all hold (see the header).
 DSIG=[([c.strip() for c in m.split('&')],v) for m,v in MAP['director_sig']]
 DSIG_VERSION=(MAP['director_sig_version'][0][1] or 'unversioned') if MAP['director_sig_version'] else ('unversioned' if DSIG else 'none')
+# Unit-cost table (a map kind, so a rename needs no code change): match = unit name, value = the numerator class (a
+# director class from by-director-class.csv) or a status word, "pending" or "n/a", note = the denominator's source name.
+UNITS=[(r['match'].strip(),r['value'].strip(),(r.get('note') or '').strip()) for r in csv.DictReader(open(MAPF)) if r['kind'].strip()=='unit_cost']
+def read_unit_counts():
+    # LEDGER_UNIT_COUNTS names a CSV with the header unit,count: counts only, no text. Unreadable or absent means no counts.
+    path=os.environ.get('LEDGER_UNIT_COUNTS')
+    if not path: return {}
+    try:
+        with open(path,newline='') as fh:
+            res={}
+            for r in csv.DictReader(fh):
+                try: res[(r.get('unit') or '').strip()]=int((r.get('count') or '').strip())
+                except ValueError: continue
+            return res
+    except OSError: return {}
+UNIT_COUNTS=read_unit_counts()
 RESIDUAL='no class (no tool call in the session)'   # provisional name: the design names none
 NEEDLES=sorted({c[len('bashtext:'):] for cl,_ in DSIG for c in cl if c.startswith('bashtext:')})
 SEGSPLIT=re.compile(r'&&|\|\||;|\||\n'); ENVASSIGN=re.compile(r'^[A-Za-z_][A-Za-z0-9_]*=\S*\s+')
@@ -432,6 +452,16 @@ wr('unattributed-sessions.csv',['cluster','session_hash','class','project_dir','
 wr('director-wait-bridge.csv',['cluster','line','row','requests','usd_micro'],
    [[CLUSTER,ln,rw,bridge[(ln,rw)]['requests'],bridge[(ln,rw)]['usd_micro']] for ln,rw in
     (('memo',HUBWAIT),('memo',C_DIR),('new',HUBWAIT),('new',C_DIR),('bridge',MOVED))])
+if UNITS:
+    # A unit's cost is its class's list cost over a counted denominator, in whole micro-dollars. A zero, missing or absent
+    # count prints "n/a" with the source named, never 0; a unit whose value is a status word prints that word.
+    rowsu=[]
+    for unit,val,src in UNITS:
+        if val in ('pending','n/a',''):
+            rowsu.append([CLUSTER,unit,'','',str(UNIT_COUNTS[unit]) if unit in UNIT_COUNTS else '',src,'pending' if val=='pending' else 'n/a']); continue
+        cnt=UNIT_COUNTS.get(unit); usd=dirrows[val]['usd_micro'] if val in dirrows else 0
+        rowsu.append([CLUSTER,unit,val,usd,'' if cnt is None else cnt,src,round(usd/cnt) if cnt else 'n/a'])
+    wr('unit-costs.csv',['cluster','unit','class','class_usd_micro','denominator','source','unit_usd_micro'],rowsu)
 wr('by-token-class.csv',['cluster','token_class','requests','list_usd'],
    [[CLUSTER,nm,tk[nm]['requests'],round(tk[nm]['usd_micro']/1e6,2)] for nm in TOKEN_CLASSES])
 if DSIG:
