@@ -576,13 +576,23 @@ class T(unittest.TestCase):
         self.assertEqual((u.get('unit_usd_micro'), u.get('source')), ('n/a', 'asks.jsonl, intake rows joined to close rows by ask_id'))
 
 
+    def test_unit_cost_mutants_turn_red(self):
         counts = [('per relay', '2'), ('per operator decision', '0'), ('per stall cleared', '9')]   # per merge is absent
         good = self.unit_run(counts)
-        for a, b in (("round(usd/cnt) if cnt else 'n/a'", "round(usd/cnt) if cnt else 0"),
-                     ("'pending' if val=='pending' else 'n/a'", "'n/a'"),
-                     ("usd=dirrows[val]['usd_micro'] if val in dirrows else 0", "usd=0"),
-                     ("cnt=UNIT_COUNTS.get(unit)", "cnt=UNIT_COUNTS.get(unit,1)")):
-            self.assertNotEqual(self.unit_run(counts, script=self.mutant(a, b)), good, a)
+        for a, b, n in (("round(usd/cnt) if cnt else 'n/a'", "round(usd/cnt) if cnt else 0", 2),
+                        ("'pending' if val=='pending' else 'n/a'", "'n/a'", 1),
+                        ("usd=dirrows[val]['usd_micro'] if val in dirrows else 0", "usd=0", 1),
+                        ("cnt=UNIT_COUNTS.get(unit)", "cnt=UNIT_COUNTS.get(unit,1)", 1)):
+            self.assertNotEqual(self.unit_run(counts, script=self.mutant(a, b, n)), good, a)
+
+    def test_asks_join_mutants_turn_red(self):
+        good = self.ask_run(self.asks_rows())[1]
+        for a, b in (("at.startswith(WINDOW))", "True)"), ("if a in intake and", "if True and")):
+            m = self.mutant(a, b)
+            res = run(m, [('ds', None, [rec('ds', 900, '/srv/demo-orch/x', skill='director')])], maprows=self.sig_rows() + self.ASKUNIT,
+                      asks=self.asks_rows())
+            closed = {r['as']: int(r['closed']) for r in (res.get('asks-closed.csv') or [])}
+            self.assertNotEqual(closed, good, a)
 
     def test_the_unit_table_is_data_so_a_rename_in_the_map_moves_the_label(self):
         units = [('unit_cost', 'per message passed on', 'intake and relay', 'relay-log entries')]
