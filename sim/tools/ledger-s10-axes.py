@@ -163,6 +163,13 @@ def read_asks_closed(path):
 ASKS_PATH=(sys.argv[7] or None) if len(sys.argv)>7 else None
 ASKS_CLOSED=read_asks_closed(ASKS_PATH) if ASKS_PATH else None
 RESIDUAL='no class (no tool call in the session)'   # provisional name: the design names none
+# Split guard: a director_split row that cannot hold is named on stderr and the run goes on unchanged (the last row for a sub-line wins).
+_known={v for _,v in DSIG}|{RESIDUAL}
+_seen=set()
+for _sub,_par in MAP['director_split']:
+    if _par not in _known: print('director_split row %r -> %r: the parent is not a class any director_sig row produces'%(_sub,_par),file=sys.stderr)
+    if _sub in _seen: print('director_split sub-line %r is named in more than one row; the last row wins'%_sub,file=sys.stderr)
+    _seen.add(_sub)
 NEEDLES=sorted({c[len('bashtext:'):] for cl,_ in DSIG for c in cl if c.startswith('bashtext:')})
 SEGSPLIT=re.compile(r'&&|\|\||;|\||\n'); ENVASSIGN=re.compile(r'^[A-Za-z_][A-Za-z0-9_]*=\S*\s+')
 def segments(cmd):
