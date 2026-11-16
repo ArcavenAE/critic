@@ -5,7 +5,7 @@
 # git common dir and its origin remote, so worktrees map to their parent repo, else "unknown");
 # and goal, from the same map table. The script names no repo, team or goal; all of them live in
 # the map table, which the operator edits. Writes aggregate rows only. No transcript text out.
-# Usage: python3 -I ledger-s10-axes.py OUT_DIR PRICES_JSON CLUSTER_LABEL MAP_CSV [PROJECTS_ROOT [MARVEL_LOG_DIR]]
+# Usage: python3 -I ledger-s10-axes.py OUT_DIR PRICES_JSON CLUSTER_LABEL MAP_CSV [PROJECTS_ROOT [MARVEL_LOG_DIR [ASKS_JSONL]]]
 # MAP_CSV columns: kind,match,value,note. Kinds, applied in this order for goal:
 #   activity       match = activity name                 -> goal (applies to every repo)
 #   activity_repo  match = "activity|repo"               -> goal
@@ -39,6 +39,11 @@
 #                  class (no tool call in the session)", a provisional name. by-director-inheritance.csv splits each class
 #                  by how its requests got it: direct, next, previous or none. The command text is read to match
 #                  and is never kept: only each segment's first three words and the bashtext needles that hit are held.
+# Asks closed: ASKS_JSONL, an optional seventh argument, is a director asks.jsonl (intake rows and close rows). Its intake rows
+# are joined to its own close rows by ask_id; asks-closed.csv counts the asks closed in the audit month by how they closed
+# (one close per ask; a close with no intake row or outside the month is not counted). Only ask_id, event, closed_at, received_at and as
+# are read (received_at only to tell an intake row): the text and reason fields are never looked at. A unit_cost row whose value is join:asks is that count's unit cost
+# over every director class, and prints "pending" when no asks file is given.
 # Unit costs: a unit_cost map row names a unit, its numerator class and its denominator's source. LEDGER_UNIT_COUNTS names a
 # CSV (unit,count; counts only) that supplies the denominators, which transcripts cannot. unit-costs.csv prints each unit's
 # cost in whole micro-dollars, or "n/a" with its source when the count is missing or zero, or "pending" for a unit whose
@@ -122,6 +127,25 @@ def read_unit_counts():
             return res
     except OSError: return {}
 UNIT_COUNTS=read_unit_counts()
+WINDOW='2026-10'   # the audit's month, as a timestamp prefix
+def read_asks_closed(path):
+    # Joins intake rows of an asks.jsonl to its own close rows by ask_id and counts the asks closed in the audit window, by
+    # how they closed. Only ask_id, event, closed_at and as are read; no other field is looked at and none is kept.
+    # One close counts per ask; a close with no intake row, or outside the window, is not counted. None when unreadable.
+    try: lines=open(path,errors='replace').read().splitlines()
+    except OSError: return 'unreadable'
+    intake=set(); closes={}
+    for line in lines:
+        try: r=json.loads(line)
+        except ValueError: continue
+        if not isinstance(r,dict) or not isinstance(r.get('ask_id'),str): continue
+        if r.get('event')=='close':
+            closes.setdefault(r['ask_id'],(r.get('closed_at') if isinstance(r.get('closed_at'),str) else '',str(r.get('as') or 'unrecorded')))
+        elif isinstance(r.get('received_at'),str): intake.add(r['ask_id'])
+    by=collections.Counter(how for a,(at,how) in closes.items() if a in intake and at.startswith(WINDOW))
+    return by
+ASKS_PATH=sys.argv[7] if len(sys.argv)>7 else None
+ASKS_CLOSED=read_asks_closed(ASKS_PATH) if ASKS_PATH else None
 RESIDUAL='no class (no tool call in the session)'   # provisional name: the design names none
 NEEDLES=sorted({c[len('bashtext:'):] for cl,_ in DSIG for c in cl if c.startswith('bashtext:')})
 SEGSPLIT=re.compile(r'&&|\|\||;|\||\n'); ENVASSIGN=re.compile(r'^[A-Za-z_][A-Za-z0-9_]*=\S*\s+')
@@ -207,7 +231,7 @@ for f in glob.glob(root+'/**/*.jsonl',recursive=True):
             if t=='agent-name' and r.get('agentName'): names[r.get('sessionId')]=r['agentName']; continue
             if t!='assistant': continue
             ts=r.get('timestamp') or ''
-            if not ts.startswith('2026-10'): continue
+            if not ts.startswith(WINDOW): continue
             recs+=1; m=r.get('message') or {}; mid=m.get('id') or ('nomid:'+str(r.get('uuid'))); rid_n.add(r.get('requestId'))
             u=m.get('usage') or {}; cc=u.get('cache_creation') or {}
             tools={b.get('name') for b in (m.get('content') or []) if isinstance(b,dict) and b.get('type')=='tool_use'}
@@ -457,6 +481,14 @@ if UNITS:
     # count, or a class the run did not find, prints "n/a" with the source named, never 0; a unit whose value is a status word prints that word.
     rowsu=[]
     for unit,val,src in UNITS:
+        if val=='join:asks':
+            # numerator: every director class; denominator: asks closed, from the asks.jsonl join argument
+            if ASKS_PATH is None: rowsu.append([CLUSTER,unit,'','','',src,'pending']); continue
+            if ASKS_CLOSED=='unreadable': rowsu.append([CLUSTER,unit,'','','','asks file unreadable: '+ASKS_PATH,'n/a']); continue
+            # no director rows found (no director_sig rows in the map) means no cost to divide: n/a, never 0; a found set
+            # that sums to zero is a true zero
+            cnt=sum(ASKS_CLOSED.values()); usd=sum(c['usd_micro'] for c in dirrows.values()) if dirrows else None
+            rowsu.append([CLUSTER,unit,'all director classes','' if usd is None else usd,cnt,src,round(usd/cnt) if cnt and usd is not None else 'n/a']); continue
         if val in ('pending','n/a',''):
             rowsu.append([CLUSTER,unit,'','',str(UNIT_COUNTS[unit]) if unit in UNIT_COUNTS else '',src,'pending' if val=='pending' else 'n/a']); continue
         # A class the run did not find has no cost to divide: it prints n/a with its source, never 0. A class that was found and
@@ -464,6 +496,8 @@ if UNITS:
         cnt=UNIT_COUNTS.get(unit); usd=dirrows[val]['usd_micro'] if val in dirrows else None
         rowsu.append([CLUSTER,unit,val,'' if usd is None else usd,'' if cnt is None else cnt,src,round(usd/cnt) if cnt and usd is not None else 'n/a'])
     wr('unit-costs.csv',['cluster','unit','class','class_usd_micro','denominator','source','unit_usd_micro'],rowsu)
+if isinstance(ASKS_CLOSED,collections.Counter):
+    wr('asks-closed.csv',['cluster','as','closed'],[[CLUSTER,'all',sum(ASKS_CLOSED.values())]]+[[CLUSTER,k,ASKS_CLOSED[k]] for k in sorted(ASKS_CLOSED)])
 wr('by-token-class.csv',['cluster','token_class','requests','list_usd'],
    [[CLUSTER,nm,tk[nm]['requests'],round(tk[nm]['usd_micro']/1e6,2)] for nm in TOKEN_CLASSES])
 if DSIG:

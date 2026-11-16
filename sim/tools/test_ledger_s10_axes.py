@@ -66,7 +66,7 @@ def rec_use(sid, n, uses, cwd='/srv/demo-orch/x', ts='2026-10-05T10:00:00Z'):
                       'cache_creation_input_tokens': 0}}}
 
 
-def run(script, sessions, launch_lines=(), gz_lines=(), prices=None, mkout=True, cache=None, maprows=(), counts=None):
+def run(script, sessions, launch_lines=(), gz_lines=(), prices=None, mkout=True, cache=None, maprows=(), counts=None, asks=None, asks_path=None):
     """sessions: list of (sid, agent_name or None, [records]). Returns {file: rows} from the output dir."""
     with tempfile.TemporaryDirectory() as d:
         proj = os.path.join(d, 'cfg', 'projects', 'p'); os.makedirs(proj)
@@ -97,8 +97,15 @@ def run(script, sessions, launch_lines=(), gz_lines=(), prices=None, mkout=True,
             with open(os.path.join(d, 'counts.csv'), 'w', newline='') as fh:
                 csv.writer(fh).writerows([('unit', 'count')] + list(counts))
             env['LEDGER_UNIT_COUNTS'] = os.path.join(d, 'counts.csv')
+        argv = [os.path.join(d, 'cfg', 'projects'), logd]
+        if asks is not None:
+            with open(os.path.join(d, 'asks.jsonl'), 'w') as fh:
+                fh.write('\n'.join(a if isinstance(a, str) else json.dumps(a) for a in asks) + '\n')
+            argv.append(os.path.join(d, 'asks.jsonl'))
+        if asks_path is not None:
+            argv.append(asks_path)
         r = subprocess.run([sys.executable, '-I', script, out, os.path.join(d, 'prices.json'), 'demo',
-                            os.path.join(d, 'map.csv'), os.path.join(d, 'cfg', 'projects'), logd],
+                            os.path.join(d, 'map.csv')] + argv,
                            capture_output=True, text=True, env=env)
         assert r.returncode == 0, r.stderr
         res = {'_cr': [], '_stderr': r.stderr}
@@ -525,6 +532,51 @@ class T(unittest.TestCase):
                           'per ask closed': 'pending', 'per stall cleared': 'n/a'})
         self.assertTrue(t and '0' not in [r['unit_usd_micro'] for r in t.values()])
 
+    ASKUNIT = [('unit_cost', 'per ask closed', 'join:asks', 'asks.jsonl, intake rows joined to close rows by ask_id')]
+
+    def asks_rows(self):
+        # synthetic rows in the asks.jsonl shapes; the text and reason fields must never reach an output
+        i = lambda n, day: {'ask_id': 'I-%d' % n, 'received_at': '2026-10-%02dT10:00:00Z' % day, 'source': 'operator',
+                            'text': 'SECRETTEXT%d' % n}
+        c = lambda n, day, how, **kw: dict({'event': 'close', 'ask_id': 'I-%d' % n, 'closed_at': day, 'as': how, 'ref': 'where'}, **kw)
+        return [i(1, 3), i(2, 4), i(3, 5), i(4, 6), i(5, 7),
+                c(1, '2026-10-04T10:00:00Z', 'answered'), c(2, '2026-10-05T10:00:00Z', 'carded'),
+                c(3, '2026-10-06T10:00:00Z', 'not-an-ask', reason='SECRETREASON'),
+                c(1, '2026-10-09T10:00:00Z', 'answered'),          # a second close of the same ask counts once
+                c(5, '2026-11-01T10:00:00Z', 'answered'),          # closed after the audit window
+                c(9, '2026-10-08T10:00:00Z', 'answered'),          # a close with no intake row
+                'not json at all', '{"event": "close"}']
+
+    def ask_run(self, asks, units=None):
+        recs = [rec('ds', 900, '/srv/demo-orch/x', skill='director')]
+        uses = [[self.SEND]] * 3 + [[('Bash', 'merge-guard 1')]] * 2 + [[('Bash', 'card-ingest a')]]
+        recs += [rec_use('ds', 901 + i, u) for i, u in enumerate(uses)]
+        res = run(SCRIPT, [('ds', None, recs)], maprows=self.sig_rows() + (self.ASKUNIT if units is None else units), asks=asks)
+        closed = {r['as']: int(r['closed']) for r in (res.get('asks-closed.csv') or [])}
+        unit = {r['unit']: r for r in (res.get('unit-costs.csv') or [])}
+        return res, closed, unit
+
+    def test_the_asks_join_yields_the_closed_count_and_the_per_ask_cost(self):
+        res, closed, unit = self.ask_run(self.asks_rows())
+        self.assertEqual(closed, {'all': 3, 'answered': 1, 'carded': 1, 'not-an-ask': 1})
+        u = unit.get('per ask closed', {})
+        self.assertEqual((u.get('class'), u.get('denominator'), u.get('unit_usd_micro')), ('all director classes', '3', str(round(7 * self.REQ / 3))))
+        text = json.dumps(res)
+        for word in ('SECRETTEXT', 'SECRETREASON'):
+            self.assertNotIn(word, text)
+
+    def test_without_the_asks_file_the_cell_prints_pending(self):
+        res, closed, unit = self.ask_run(None)
+        self.assertEqual(closed, {})
+        self.assertNotIn('asks-closed.csv', res)
+        self.assertEqual(unit.get('per ask closed', {}).get('unit_usd_micro'), 'pending')
+
+    def test_an_asks_file_with_no_closes_prints_n_a_with_its_source_not_zero(self):
+        res, closed, unit = self.ask_run([r for r in self.asks_rows() if isinstance(r, dict) and r.get('event') != 'close'])
+        self.assertEqual(closed, {'all': 0})
+        u = unit.get('per ask closed', {})
+        self.assertEqual((u.get('unit_usd_micro'), u.get('source')), ('n/a', 'asks.jsonl, intake rows joined to close rows by ask_id'))
+
     def test_a_class_the_run_did_not_find_prints_n_a_but_a_found_class_at_zero_prints_zero(self):
         # per relay's class (intake and relay) is found with a priced request; per merge's class is absent from the run;
         # a third unit names a class the map never defines. With counts given for all, only the found class has a cost.
@@ -555,11 +607,52 @@ class T(unittest.TestCase):
     def test_unit_cost_mutants_turn_red(self):
         counts = [('per relay', '2'), ('per operator decision', '0'), ('per stall cleared', '9')]   # per merge is absent
         good = self.unit_run(counts)
-        for a, b in (("round(usd/cnt) if cnt and usd is not None else 'n/a'", "round(usd/cnt) if cnt and usd is not None else 0"),
-                     ("'pending' if val=='pending' else 'n/a'", "'n/a'"),
+        for a, b, n in (("round(usd/cnt) if cnt and usd is not None else 'n/a'", "round(usd/cnt) if cnt and usd is not None else 0", 2),
+                        ("'pending' if val=='pending' else 'n/a'", "'n/a'", 1),
+                        ("cnt=UNIT_COUNTS.get(unit)", "cnt=UNIT_COUNTS.get(unit,1)", 1)):
+            self.assertNotEqual(self.unit_run(counts, script=self.mutant(a, b, n)), good, a)
 
-                     ("cnt=UNIT_COUNTS.get(unit)", "cnt=UNIT_COUNTS.get(unit,1)")):
-            self.assertNotEqual(self.unit_run(counts, script=self.mutant(a, b)), good, a)
+    def ask_cells(self, maprows, recs, asks=None, asks_path=None):
+        res = run(SCRIPT, [('ds', None, recs)], maprows=maprows, asks=asks, asks_path=asks_path)
+        return res, {r['unit']: r for r in (res.get('unit-costs.csv') or [])}.get('per ask closed', {})
+
+    def test_per_ask_closed_prints_n_a_when_the_run_found_no_director_rows_and_zero_when_they_sum_to_zero(self):
+        recs = [rec('ds', 900, '/srv/demo-orch/x', skill='director')] + [rec_use('ds', 901 + i, [self.SEND]) for i in range(3)]
+        # the map has no director_sig rows: nothing was classified, so there is no cost to divide
+        res, u = self.ask_cells(list(self.ASKUNIT), recs, asks=self.asks_rows())
+        self.assertEqual((u.get('denominator'), u.get('unit_usd_micro'), u.get('source')),
+                         ('3', 'n/a', 'asks.jsonl, intake rows joined to close rows by ask_id'))
+        # director rows were found and cost nothing: a true zero
+        free = []
+        for r in recs:
+            r = json.loads(json.dumps(r))
+            r['message']['usage'] = {'input_tokens': 0, 'output_tokens': 0, 'cache_read_input_tokens': 0, 'cache_creation_input_tokens': 0}
+            free.append(r)
+        res, u = self.ask_cells(self.sig_rows() + self.ASKUNIT, free, asks=self.asks_rows())
+        self.assertEqual((u.get('class_usd_micro'), u.get('unit_usd_micro')), ('0', '0'))
+
+    def test_an_asks_file_that_cannot_be_read_prints_n_a_naming_the_file_not_pending(self):
+        recs = [rec('ds', 900, '/srv/demo-orch/x', skill='director')]
+        res, u = self.ask_cells(self.sig_rows() + self.ASKUNIT, recs, asks_path='/nonexistent-dir/asks-missing.jsonl')
+        self.assertEqual(u.get('unit_usd_micro'), 'n/a')
+        self.assertIn('/nonexistent-dir/asks-missing.jsonl', u.get('source', ''))
+        self.assertNotIn('asks-closed.csv', res)
+
+    def test_the_header_names_every_field_the_asks_join_reads(self):
+        with open(SCRIPT) as fh:
+            src = fh.read()
+        head = src[src.index('# Asks closed:'):src.index('# Unit costs:')]
+        for field in ('ask_id', 'event', 'closed_at', 'as', 'received_at'):
+            self.assertIn(field, head)
+
+    def test_asks_join_mutants_turn_red(self):
+        good = self.ask_run(self.asks_rows())[1]
+        for a, b in (("at.startswith(WINDOW))", "True)"), ("if a in intake and", "if True and")):
+            m = self.mutant(a, b)
+            res = run(m, [('ds', None, [rec('ds', 900, '/srv/demo-orch/x', skill='director')])], maprows=self.sig_rows() + self.ASKUNIT,
+                      asks=self.asks_rows())
+            closed = {r['as']: int(r['closed']) for r in (res.get('asks-closed.csv') or [])}
+            self.assertNotEqual(closed, good, a)
 
     def test_the_unit_table_is_data_so_a_rename_in_the_map_moves_the_label(self):
         units = [('unit_cost', 'per message passed on', 'intake and relay', 'relay-log entries')]
