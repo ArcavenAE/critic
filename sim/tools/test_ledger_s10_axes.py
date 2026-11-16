@@ -66,7 +66,7 @@ def rec_use(sid, n, uses, cwd='/srv/demo-orch/x', ts='2026-10-05T10:00:00Z'):
                       'cache_creation_input_tokens': 0}}}
 
 
-def run(script, sessions, launch_lines=(), gz_lines=(), prices=None, mkout=True, cache=None, maprows=()):
+def run(script, sessions, launch_lines=(), gz_lines=(), prices=None, mkout=True, cache=None, maprows=(), counts=None):
     """sessions: list of (sid, agent_name or None, [records]). Returns {file: rows} from the output dir."""
     with tempfile.TemporaryDirectory() as d:
         proj = os.path.join(d, 'cfg', 'projects', 'p'); os.makedirs(proj)
@@ -92,6 +92,11 @@ def run(script, sessions, launch_lines=(), gz_lines=(), prices=None, mkout=True,
             os.makedirs(out)
         # the repo cache sidecar never lands in a real home: each run gets its own file unless the test shares one
         env = dict(os.environ, LEDGER_REPO_CACHE=cache or os.path.join(d, 'repo-cache.csv'))
+        env.pop('LEDGER_UNIT_COUNTS', None)
+        if counts is not None:
+            with open(os.path.join(d, 'counts.csv'), 'w', newline='') as fh:
+                csv.writer(fh).writerows([('unit', 'count')] + list(counts))
+            env['LEDGER_UNIT_COUNTS'] = os.path.join(d, 'counts.csv')
         r = subprocess.run([sys.executable, '-I', script, out, os.path.join(d, 'prices.json'), 'demo',
                             os.path.join(d, 'map.csv'), os.path.join(d, 'cfg', 'projects'), logd],
                            capture_output=True, text=True, env=env)
@@ -483,7 +488,85 @@ class T(unittest.TestCase):
             m = self.mutant(a, b)
             self.assertNotEqual(self.noid_rows(m), self.noid_rows(SCRIPT), a)
 
-    def test_inheritance_mutants_turn_red(self):
+    UNITS = [('unit_cost', 'per relay', 'intake and relay', 'relay-log entries'),
+             ('unit_cost', 'per merge', 'merge gating', 'GitHub merged-PR list'),
+             ('unit_cost', 'per operator decision', 'decision routing', 'desk-snapshot answered cards'),
+             # a value that is not a class says the status: "pending" (a source not built yet) or "n/a" (no source exists)
+             ('unit_cost', 'per ask closed', 'pending', 'asks.jsonl joined to the workstream ledger'),
+             ('unit_cost', 'per stall cleared', 'n/a', 'none: nothing records a stall cleared')]
+
+    def unit_run(self, counts, units=None, script=None):
+        # director session ds: 3 relays, 2 merge-guard calls, 1 card-ingest call and the director skill call
+        recs = [rec('ds', 800, '/srv/demo-orch/x', skill='director')]
+        uses = [[self.SEND]] * 3 + [[('Bash', 'merge-guard 1')]] * 2 + [[('Bash', 'card-ingest a')]]
+        recs += [rec_use('ds', 801 + i, u) for i, u in enumerate(uses)]
+        res = run(script or SCRIPT, [('ds', None, recs)], maprows=self.sig_rows() + (self.UNITS if units is None else units),
+                  counts=counts)
+        return {r['unit']: r for r in (res.get('unit-costs.csv') or [])}
+
+    def test_unit_costs_divide_a_class_by_a_counted_denominator(self):
+        R = self.REQ
+        t = self.unit_run([('per relay', '2'), ('per merge', '4'), ('per operator decision', '0'), ('per stall cleared', '9')])
+        self.assertEqual({u: (r['class_usd_micro'], r['denominator'], r['source'], r['unit_usd_micro']) for u, r in t.items()},
+                         {'per relay': (str(3 * R), '2', 'relay-log entries', str(3 * R // 2)),
+                          'per merge': (str(2 * R), '4', 'GitHub merged-PR list', str(2 * R // 4)),
+                          'per operator decision': (str(R), '0', 'desk-snapshot answered cards', 'n/a'),
+                          'per ask closed': ('', '', 'asks.jsonl joined to the workstream ledger', 'pending'),
+                          'per stall cleared': ('', '9', 'none: nothing records a stall cleared', 'n/a')})
+
+    def test_a_missing_unit_or_a_missing_file_prints_n_a_with_its_source_never_zero(self):
+        t = self.unit_run([('per relay', '2')])
+        g = lambda u, k: t.get(u, {}).get(k)
+        self.assertEqual((g('per merge', 'unit_usd_micro'), g('per merge', 'source')), ('n/a', 'GitHub merged-PR list'))
+        self.assertEqual((g('per operator decision', 'unit_usd_micro'), g('per operator decision', 'denominator')), ('n/a', ''))
+        t = self.unit_run(None)
+        self.assertEqual({u: r['unit_usd_micro'] for u, r in t.items()},
+                         {'per relay': 'n/a', 'per merge': 'n/a', 'per operator decision': 'n/a',
+                          'per ask closed': 'pending', 'per stall cleared': 'n/a'})
+        self.assertTrue(t and '0' not in [r['unit_usd_micro'] for r in t.values()])
+
+    def test_a_class_the_run_did_not_find_prints_n_a_but_a_found_class_at_zero_prints_zero(self):
+        # per relay's class (intake and relay) is found with a priced request; per merge's class is absent from the run;
+        # a third unit names a class the map never defines. With counts given for all, only the found class has a cost.
+        units = [('unit_cost', 'per relay', 'intake and relay', 'relay-log entries'),
+                 ('unit_cost', 'per merge', 'merge gate', 'GitHub merged-PR list'),
+                 ('unit_cost', 'per typo', 'merge gatng', 'nowhere')]
+        counts = [('per relay', '2'), ('per merge', '4'), ('per typo', '4')]
+        t = self.unit_run(counts, units)
+        got = {u: (r['unit_usd_micro'], r['source']) for u, r in t.items()}
+        self.assertEqual(got, {'per relay': (str(3 * self.REQ // 2), 'relay-log entries'),
+                               'per merge': ('n/a', 'GitHub merged-PR list'),
+                               'per typo': ('n/a', 'nowhere')})
+        # a class that is found and cost nothing (a request with no tokens) is a true zero, and prints 0
+        free = rec_use('ds', 900, [self.SEND])
+        free['message']['usage'] = {'input_tokens': 0, 'output_tokens': 0, 'cache_read_input_tokens': 0,
+                                    'cache_creation_input_tokens': 0}
+        res = run(SCRIPT, [('ds', None, [rec('ds', 899, '/srv/demo-orch/x', skill='director'), free])],
+                  maprows=self.sig_rows() + units[:1], counts=[('per relay', '2')])
+        t = {r['unit']: r for r in (res.get('unit-costs.csv') or [])}
+        self.assertEqual((t['per relay']['class_usd_micro'], t['per relay']['unit_usd_micro']), ('0', '0'))
+
+    def test_absent_class_mutants_turn_red(self):
+        units = [('unit_cost', 'per merge', 'merge gate', 'GitHub merged-PR list')]
+        good = self.unit_run([('per merge', '4')], units)
+        for a, b in (("usd=dirrows[val]['usd_micro'] if val in dirrows else None", "usd=dirrows[val]['usd_micro'] if val in dirrows else 0"),):
+            self.assertNotEqual(self.unit_run([('per merge', '4')], units, script=self.mutant(a, b)), good, a)
+
+    def test_unit_cost_mutants_turn_red(self):
+        counts = [('per relay', '2'), ('per operator decision', '0'), ('per stall cleared', '9')]   # per merge is absent
+        good = self.unit_run(counts)
+        for a, b in (("round(usd/cnt) if cnt and usd is not None else 'n/a'", "round(usd/cnt) if cnt and usd is not None else 0"),
+                     ("'pending' if val=='pending' else 'n/a'", "'n/a'"),
+
+                     ("cnt=UNIT_COUNTS.get(unit)", "cnt=UNIT_COUNTS.get(unit,1)")):
+            self.assertNotEqual(self.unit_run(counts, script=self.mutant(a, b)), good, a)
+
+    def test_the_unit_table_is_data_so_a_rename_in_the_map_moves_the_label(self):
+        units = [('unit_cost', 'per message passed on', 'intake and relay', 'relay-log entries')]
+        t = self.unit_run([('per message passed on', '3')], units)
+        self.assertEqual({u: r['unit_usd_micro'] for u, r in t.items()}, {'per message passed on': str(self.REQ)})
+
+
         cases = [([('ds', [(1, [self.SEND]), (2, []), (3, [self.ROSTER])])]),
                  ([('ds', [(1, []), (2, [self.ROSTER]), (3, [self.SEND])])]),
                  ([('ds', [(1, [self.SEND]), (2, [self.SEND]), (3, [])])]),
