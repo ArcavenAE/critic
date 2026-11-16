@@ -2,7 +2,7 @@
 # Tests for ledger-s10-axes.py. Runs the script end to end over invented transcripts, an invented map and an
 # invented marvel log, so nothing here reads a real home directory.
 # Run: python3 -I sim/tools/test_ledger_s10_axes.py
-import concurrent.futures, csv, glob, gzip, json, os, shutil, subprocess, sys, tempfile, unittest, hashlib
+import collections, concurrent.futures, csv, glob, gzip, json, os, shutil, subprocess, sys, tempfile, unittest, hashlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, 'ledger-s10-axes.py')
@@ -51,7 +51,22 @@ def rec_part(sid, n, part, uses, cwd='/srv/demo-orch/x', ts='2026-10-05T10:00:00
                       'cache_creation_input_tokens': 0}}}
 
 
-def run(script, sessions, launch_lines=(), gz_lines=(), prices=None, mkout=True, cache=None):
+def rec_use(sid, n, uses, cwd='/srv/demo-orch/x', ts='2026-10-05T10:00:00Z'):
+    """One request. uses: list of tool names, or (tool name, Bash command) pairs."""
+    content = []
+    for i, u in enumerate(uses):
+        name, cmd = (u, None) if isinstance(u, str) else u
+        b = {'type': 'tool_use', 'id': 'tu%s-%s' % (n, i), 'name': name}
+        if cmd is not None:
+            b['input'] = {'command': cmd}
+        content.append(b)
+    return {'type': 'assistant', 'timestamp': ts, 'sessionId': sid, 'cwd': cwd, 'requestId': 'r%s' % n,
+            'uuid': 'u%s' % n, 'message': {'id': 'm%s' % n, 'model': MODEL, 'content': content,
+            'usage': {'input_tokens': 10, 'output_tokens': 5, 'cache_read_input_tokens': 100,
+                      'cache_creation_input_tokens': 0}}}
+
+
+def run(script, sessions, launch_lines=(), gz_lines=(), prices=None, mkout=True, cache=None, maprows=()):
     """sessions: list of (sid, agent_name or None, [records]). Returns {file: rows} from the output dir."""
     with tempfile.TemporaryDirectory() as d:
         proj = os.path.join(d, 'cfg', 'projects', 'p'); os.makedirs(proj)
@@ -71,7 +86,7 @@ def run(script, sessions, launch_lines=(), gz_lines=(), prices=None, mkout=True,
         with open(os.path.join(d, 'prices.json'), 'w') as fh:
             json.dump(PRICES if prices is None else prices, fh)
         with open(os.path.join(d, 'map.csv'), 'w', newline='') as fh:
-            csv.writer(fh).writerows(MAP)
+            csv.writer(fh).writerows(list(MAP) + list(maprows))
         out = os.path.join(d, 'out')
         if mkout:
             os.makedirs(out)
@@ -290,6 +305,110 @@ class T(unittest.TestCase):
                      ("key=(mid,b['id']) if b.get('id') else ('noid',r.get('uuid'),i)", "key=('noid',r.get('uuid'),i)")):
             got, want = self.split_message_classes(self.mutant(a, b))
             self.assertNotEqual(got, want)
+
+    # The director signature table, as the design's section 2 lists it, written as map rows. match syntax: "tool:NAME"
+    # (a trailing * is a prefix), "all:A|B" (every tool of the request is one of them), "bash:WORDS" (some segment of
+    # some Bash command starts with those words), "bashtext:TEXT" (a Bash command contains TEXT), "*" (anything);
+    # clauses joined with & must all hold. First row that matches wins.
+    W = 'mcp__director__wait_for_message'
+    MG, DR, IR, OS = 'merge gating', 'decision routing', 'intake and relay', 'operator support'
+    CU, FC, FR, DO = 'custody and records', 'fleet care', 'fleet reads', 'director other'
+
+    def sig_rows(self, version='1'):
+        t = lambda m, v: ('director_sig', m, v, '')
+        rows = [] if version is None else [('director_sig_version', '', version, 'invented table')]
+        rows += [t('all:mcp__director__wait_for_message|mcp__director__inbox_summary', 'waiting'),
+                 t('bash:merge-guard', self.MG), t('bashtext:gh pr merge', self.MG),
+                 t('bash:card-ingest', self.DR), t('bash:desk-snapshot&bashtext:--answers', self.DR)]
+        rows += [t('tool:mcp__director__' + x, self.IR) for x in ('send_message', 'broadcast', 'report_status', 'set_presence')]
+        rows += [t('bash:' + x, self.IR) for x in ('relay-log', 'route-ledger')]
+        rows += [t('tool:Artifact*', self.OS)]
+        rows += [t('bash:' + x, self.OS) for x in ('desk-snapshot', 'dash-writer', 'board-html', 'nav-sync', 'page-namespace',
+                                                    'shelf-row', 'freebusy')]
+        rows += [t('bash:' + x, self.CU) for x in ('bd', 'lane-ledger', 'draft-sweep')]
+        rows += [t('tool:' + x, self.CU) for x in ('mcp__director__audit_lookup', 'Write', 'Edit')]
+        rows += [t('bash:' + x, self.FC) for x in ('marvel inject', 'marvel capture', 'marvel events', 'tmux', 'composer-check',
+                                                    'idle-shadow', 'unattached', 'standing-hook', 'sweep-firings', 'schedule-ack')]
+        rows += [t('tool:mcp__director__list_roster', self.FR)]
+        rows += [t('bash:' + x, self.FR) for x in ('marvel get', 'marvel describe', 'dsi', 'dsx', 'dws', 'dbi', 'vector-pin-drift')]
+        rows += [t('*', self.DO)]
+        return rows
+
+    def sig_fixtures(self):
+        b = lambda cmd: [('Bash', cmd)]
+        return [
+            ('waiting', [self.W]), ('waiting', [self.W, 'mcp__director__inbox_summary']),
+            (self.CU, [self.W, ('Bash', 'bd list')]),
+            (self.MG, b('merge-guard 12')), (self.MG, b('gh pr merge 5 --squash')), (self.MG, b('cd /x && merge-guard 12')),
+            (self.MG, b('FOO=1 /usr/local/bin/merge-guard 3')), (self.MG, b('for n in 1 2; do merge-guard $n; done')),
+            (self.MG, b('git log | merge-guard 1')), (self.MG, b('false || merge-guard 1')),
+            (self.DR, b('card-ingest a')), (self.DR, b('desk-snapshot --answers')), (self.OS, b('desk-snapshot')),
+            (self.IR, ['mcp__director__send_message']), (self.IR, ['mcp__director__broadcast']),
+            (self.IR, ['mcp__director__report_status']), (self.IR, ['mcp__director__set_presence']),
+            (self.IR, b('relay-log tail')), (self.IR, b('route-ledger x')),
+            (self.OS, ['Artifact']), (self.OS, ['ArtifactData']), (self.OS, b('dash-writer x')), (self.OS, b('board-html x')),
+            (self.OS, b('nav-sync')), (self.OS, b('page-namespace x')), (self.OS, b('shelf-row x')), (self.OS, b('freebusy')),
+            (self.CU, b('bd ready')), (self.CU, b('lane-ledger x')), (self.CU, b('draft-sweep')),
+            (self.CU, ['mcp__director__audit_lookup']), (self.CU, ['Write']), (self.CU, ['Edit']),
+            (self.FC, b('marvel inject s hi')), (self.FC, b('marvel capture s')), (self.FC, b('marvel events')),
+            (self.FC, b('tmux ls')), (self.FC, b('composer-check')), (self.FC, b('idle-shadow')), (self.FC, b('unattached')),
+            (self.FC, b('standing-hook')), (self.FC, b('sweep-firings')), (self.FC, b('schedule-ack')),
+            (self.FR, ['mcp__director__list_roster']), (self.FR, b('marvel get seats')), (self.FR, b('marvel describe s')),
+            (self.FR, b('dsi')), (self.FR, b('dsx')), (self.FR, b('dws')), (self.FR, b('dbi')), (self.FR, b('vector-pin-drift')),
+            (self.DO, ['Read']), (self.DO, ['Grep']), (self.DO, b('ls -l')), (self.DO, b('marvelous inject')),
+            (self.DO, b('echo bd')),
+        ]
+
+    def sig_run(self, fixtures, maprows, script=None):
+        # One director session (it calls the director skill once; that request is "director other" through the star row).
+        recs = [rec('ds', 400, '/srv/demo-orch/x', skill='director')]
+        recs += [rec_use('ds', 401 + i, uses) for i, (_, uses) in enumerate(fixtures)]
+        res = run(script or SCRIPT, [('ds', None, recs)], maprows=maprows)
+        return res, {r['class']: int(r['requests']) for r in (res.get('by-director-class.csv') or [])}
+
+    def test_each_signature_row_lands_in_its_class(self):
+        fx = self.sig_fixtures()
+        want = collections.Counter(c for c, _ in fx)
+        want[self.DO] += 1
+        res, got = self.sig_run(fx, self.sig_rows())
+        self.assertEqual(got, dict(want))
+
+    def test_the_first_matching_row_wins_so_reordering_the_table_changes_the_answer(self):
+        fx = [(self.MG, [('Bash', 'bd list && merge-guard 1')])]
+        res, got = self.sig_run(fx, self.sig_rows())
+        self.assertEqual(got, {self.MG: 1, self.DO: 1})
+        rows = self.sig_rows()
+        custody = [r for r in rows if r[1] == 'bash:bd'][0]
+        rows.remove(custody)
+        rows.insert(1, custody)
+        res, got = self.sig_run(fx, rows)
+        self.assertEqual(got, {self.CU: 1, self.DO: 1})
+
+    def test_command_text_is_read_and_not_kept(self):
+        fx = [(self.MG, [('Bash', 'echo SECRETWORD123 | merge-guard 1')])]
+        res, got = self.sig_run(fx, self.sig_rows())
+        self.assertEqual(got, {self.MG: 1, self.DO: 1})
+        self.assertNotIn('SECRETWORD123', json.dumps(res))
+
+    def test_signature_mutants_turn_red(self):
+        fx = self.sig_fixtures()
+        want = collections.Counter(c for c, _ in fx)
+        want[self.DO] += 1
+        for a, b in (("for s in SEGSPLIT.split(cmd):", "for s in [cmd]:"),
+                     ("w[0]=w[0].rsplit('/',1)[-1]; res.append", "res.append"),
+                     ("while w and w[0] in ('do','then','else','{','(','!'): w=w[1:]", "pass"),
+                     ("    for cl,v in DSIG:\n", "    for cl,v in reversed(DSIG):\n"),
+                     ("if all(clause_hits(c,blocks) for c in cl)", "if any(clause_hits(c,blocks) for c in cl)"),
+                     ("return bool(names) and set(names)<=set(arg.split('|'))", "return bool(set(names)&set(arg.split('|')))"),
+                     ("return bool(w) and any(s[:len(w)]==w", "return bool(w) and any(w[0] in s")):
+            res, got = self.sig_run(fx, self.sig_rows(), script=self.mutant(a, b))
+            self.assertNotEqual(got, dict(want), a)
+
+    def test_the_table_version_is_printed_by_every_audit(self):
+        res, _ = self.sig_run([], self.sig_rows('7'))
+        self.assertIn('director_sig_version=7\n', res['attribution-meta.txt'])
+        res, _ = self.sig_run([], self.sig_rows(None))
+        self.assertIn('director_sig_version=unversioned\n', res['attribution-meta.txt'])
 
     def test_own_skill_rolls_up_to_own(self):
         s = [('k1', None, [rec('k1', 160, '/srv/demo-orch/x', skill='demo-coach')]),

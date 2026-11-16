@@ -19,6 +19,23 @@
 #                                                           joined to a matching own rule's name with "+"
 #   orchestrator   match = regex on the cwd, home as ~    -> external orchestration (outside marvel); value = the
 #                                                           orchestrator name the project dir is rolled up to
+#   director_sig_version  value = the table's version, printed by every audit as director_sig_version= in
+#                                                           attribution-meta.txt and in axes-meta.json ("unversioned" when
+#                                                           director_sig rows exist and this row does not, "none" when no rows)
+#   director_sig   match = a signature, value = a class; rows are tried in map order and the first row that matches a
+#                                                           request wins. Applies to the requests of "director sessions
+#                                                           (coordination)" and is written to by-director-class.csv. A request
+#                                                           is its set of tool_use blocks (counted by id across records).
+#                  match syntax, clauses joined with & must all hold:
+#                    tool:NAME        some block is named NAME (a trailing * makes NAME a prefix)
+#                    all:A|B          the request has tool blocks and every one is named A or B
+#                    bash:WORDS       some segment of some Bash command starts with those words, after leading
+#                                     environment assignments, a leading do/then/else and a path prefix; a command is
+#                                     split into segments on && || ; | and newlines, and every segment is tried
+#                    bashtext:TEXT    some Bash command contains TEXT
+#                    *                any request
+#                  A request with no tool block is "no tool call (not yet inherited)". The command text is read to match
+#                  and is never kept: only each segment's first three words and the bashtext needles that hit are held.
 # Unmatched goal is "unmapped"; unmatched repo is "unknown". Both are reported as their own rows.
 # git runs in every cwd that no path rule claims, so the map's path rules must claim any root git
 # must not run in (quarantine and other read-only material). Git calls run with GIT_* cleared, so an
@@ -74,6 +91,45 @@ PATHR=[(re.compile(m),v) for m,v in MAP['path']]
 OWNR=[(re.compile(m),v) for m,v in MAP['own']]
 OWNSKILL=dict(MAP['own_skill'])
 ORCHR=[(re.compile(m),v) for m,v in MAP['orchestrator']]
+# Director signature table: rows in map order, each a list of clauses that must all hold (see the header).
+DSIG=[([c.strip() for c in m.split('&')],v) for m,v in MAP['director_sig']]
+DSIG_VERSION=(MAP['director_sig_version'][0][1] or 'unversioned') if MAP['director_sig_version'] else ('unversioned' if DSIG else 'none')
+NOCALL='no tool call (not yet inherited)'
+NEEDLES=sorted({c[len('bashtext:'):] for cl,_ in DSIG for c in cl if c.startswith('bashtext:')})
+SEGSPLIT=re.compile(r'&&|\|\||;|\||\n'); ENVASSIGN=re.compile(r'^[A-Za-z_][A-Za-z0-9_]*=\S*\s+')
+def segments(cmd):
+    # First three words of each segment of a shell command, after leading environment assignments, a leading
+    # do/then/else and a path prefix on the first word. Only these words are kept; the command is not.
+    res=[]
+    for s in SEGSPLIT.split(cmd):
+        s=s.strip()
+        while ENVASSIGN.match(s): s=ENVASSIGN.sub('',s,1)
+        w=s.split()
+        while w and w[0] in ('do','then','else','{','(','!'): w=w[1:]
+        if w:
+            w[0]=w[0].rsplit('/',1)[-1]; res.append(tuple(w[:3]))
+    return tuple(res)
+def sig_block(b):
+    # what the table needs from one tool_use block: its name, its segments' first words, the bashtext needles it holds
+    cmd=(b.get('input') or {}).get('command') if isinstance(b.get('input'),dict) else None
+    if b.get('name')!='Bash' or not isinstance(cmd,str): return (str(b.get('name') or ''),(),frozenset())
+    return ('Bash',segments(cmd),frozenset(n for n in NEEDLES if n in cmd))
+def clause_hits(c,blocks):
+    names=[b[0] for b in blocks]
+    if c=='*': return True
+    kind,_,arg=c.partition(':')
+    if kind=='tool': return any(n.startswith(arg[:-1]) if arg.endswith('*') else n==arg for n in names)
+    if kind=='all': return bool(names) and set(names)<=set(arg.split('|'))
+    if kind=='bash':
+        w=tuple(arg.split())
+        return bool(w) and any(s[:len(w)]==w for b in blocks if b[0]=='Bash' for s in b[1])
+    if kind=='bashtext': return any(arg in b[2] for b in blocks if b[0]=='Bash')
+    return False
+def director_class(blocks):
+    if not blocks: return NOCALL
+    for cl,v in DSIG:
+        if all(clause_hits(c,blocks) for c in cl): return v
+    return 'unclassed'
 GOAL={k:dict(MAP[k]) for k in ('activity','activity_repo','team_first','repo','team')}
 SEAT=re.compile(r'^([a-z0-9]+(?:-[a-z0-9]+)*?)-g(\d+)-(\d+)$')
 WAIT={'mcp__director__wait_for_message','mcp__director__inbox_summary'}
@@ -131,11 +187,13 @@ for f in glob.glob(root+'/**/*.jsonl',recursive=True):
                 if isinstance(b,dict) and b.get('type')=='tool_use' and b.get('name')=='Skill' and isinstance(b.get('input'),dict) and b['input'].get('skill'): skills[r.get('sessionId')].add(str(b['input']['skill']))
             # Tool calls are counted from every record of a message, once per tool_use id, because one message's content
             # can arrive over several records. A block with no id counts once per record.
+            newblocks=[]
             for i,b in enumerate(m.get('content') or []):
                 if isinstance(b,dict) and b.get('type')=='tool_use':
                     key=(mid,b['id']) if b.get('id') else ('noid',r.get('uuid'),i)
                     if key in seen_tu: continue
                     seen_tu.add(key)
+                    if DSIG: newblocks.append(sig_block(b))
                     toolcalls[r.get('sessionId')]['n']+=1
                     if str(b.get('name') or '').startswith('mcp__director__'): toolcalls[r.get('sessionId')]['director']+=1
             e=msgs.get(mid)
@@ -143,11 +201,11 @@ for f in glob.glob(root+'/**/*.jsonl',recursive=True):
                 e=msgs[mid]={'cwd':r.get('cwd') or '','ts':ts,'model':m.get('model'),'sid':r.get('sessionId'),'stream':f,'side':bool(r.get('isSidechain')) or sub,
                   'in':u.get('input_tokens') or 0,'cr':u.get('cache_read_input_tokens') or 0,'cw':u.get('cache_creation_input_tokens') or 0,
                   'cw5':cc.get('ephemeral_5m_input_tokens'),'cw1':cc.get('ephemeral_1h_input_tokens') or 0,'out':u.get('output_tokens') or 0,
-                  'err':bool(r.get('isApiErrorMessage') or r.get('apiErrorStatus')),'tools':set(),'usage_differs':False}
+                  'err':bool(r.get('isApiErrorMessage') or r.get('apiErrorStatus')),'tools':set(),'blocks':[],'usage_differs':False}
             else:
                 if (u.get('output_tokens') or 0)!=e['out'] or (u.get('cache_read_input_tokens') or 0)!=e['cr']: e['usage_differs']=True
                 e['out']=max(e['out'],u.get('output_tokens') or 0)
-            e['tools']|=tools
+            e['tools']|=tools; e['blocks'].extend(newblocks)
 def seat(sid):
     # (label, team, role, method, base)
     n=names.get(sid); method='agent-name'
@@ -266,7 +324,7 @@ rows=collections.defaultdict(lambda:collections.Counter())
 seatrows=collections.defaultdict(lambda:collections.Counter())
 daily=collections.defaultdict(lambda:collections.Counter())
 sess=collections.defaultdict(lambda:collections.Counter()); sessmeta={}
-bymethod=collections.Counter()
+bymethod=collections.Counter(); dirrows=collections.defaultdict(lambda:collections.Counter())
 TOKEN_CLASSES=('input','cache write','cache read','output')
 tk=collections.defaultdict(lambda:collections.Counter())
 for e in msgs.values():
@@ -279,6 +337,10 @@ for e in msgs.values():
     c=rows[k]; c['requests']+=1; bymethod[method]+=1
     sk=(cls if cls else base,method,team,role,a); sc=seatrows[sk]; sc['requests']+=1
     dc=daily[(e['ts'][:10],e['model'])]; dc['requests']+=1
+    if cls==C_DIR and DSIG:
+        dx=dirrows[director_class(e['blocks'])]; dx['requests']+=1
+        if p: dx['usd_micro']+=usd
+        else: dx['unpriced']+=1
     if p:
         c['usd_micro']+=usd; sc['usd_micro']+=usd; dc['usd_micro']+=usd
         for nm,n_tok,cost in (('input',e['in'],e['in']*p['in']),('cache write',e['cw5v']+e['cw1'],e['cw5v']*p['cw5']+e['cw1']*p['cw1']),
@@ -333,6 +395,9 @@ wr('unattributed-sessions.csv',['cluster','session_hash','class','project_dir','
     for sid,c in sorted(sess.items(),key=lambda kc:-kc[1]['usd_micro'])])
 wr('by-token-class.csv',['cluster','token_class','requests','list_usd'],
    [[CLUSTER,nm,tk[nm]['requests'],round(tk[nm]['usd_micro']/1e6,2)] for nm in TOKEN_CLASSES])
+if DSIG:
+    wr('by-director-class.csv',['cluster','class','requests','unpriced','list_usd'],
+       [[CLUSTER,k,c['requests'],c['unpriced'],round(c['usd_micro']/1e6,2)] for k,c in sorted(dirrows.items(),key=lambda kc:(-kc[1]['usd_micro'],kc[0]))])
 wr('daily-by-model.csv',['cluster','day','model','requests','list_usd','unpriced'],
    [[CLUSTER,d,m,c['requests'],round(c['usd_micro']/1e6,2),c['unpriced']] for (d,m),c in sorted(daily.items())])
 def signin():
@@ -347,9 +412,10 @@ with open(out+'/attribution-meta.txt','w') as fh:
     for m,key in (('agent-name','agent_name'),('agent-name (not a seat)','agent_name_not_a_seat'),('launch-log','launch_log'),('none','none')): fh.write('requests_%s=%d\n'%(key,bymethod[m]))
     fh.write('# signin_hash is an unsalted 12-hex pseudonym of the signed-in address, not safe to publish\n')
     fh.write('signin_hash=%s\n'%signin())
+    fh.write('director_sig_version=%s\n'%DSIG_VERSION)
 tot=collections.Counter()
 for c in rows.values(): tot.update(c)
 meta={'requests_priced_or_not':tot['requests'],'unpriced':tot['unpriced'],'list_usd':round(tot['usd_micro']/1e6,2),
  'unknown_repo_usd':round(sum(c['usd_micro'] for k,c in rows.items() if k[1]=='unknown')/1e6,2),
- 'unmapped_goal_usd':round(sum(c['usd_micro'] for k,c in rows.items() if k[2]=='unmapped')/1e6,2),'distinct_cwds':len(_rc)}
+ 'unmapped_goal_usd':round(sum(c['usd_micro'] for k,c in rows.items() if k[2]=='unmapped')/1e6,2),'distinct_cwds':len(_rc),'director_sig_version':DSIG_VERSION}
 json.dump(meta,open(out+'/axes-meta.json','w'),indent=1); print(json.dumps(meta,indent=1))
