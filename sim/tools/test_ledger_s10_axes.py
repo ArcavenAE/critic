@@ -491,8 +491,9 @@ class T(unittest.TestCase):
     UNITS = [('unit_cost', 'per relay', 'intake and relay', 'relay-log entries'),
              ('unit_cost', 'per merge', 'merge gating', 'GitHub merged-PR list'),
              ('unit_cost', 'per operator decision', 'decision routing', 'desk-snapshot answered cards'),
-             ('unit_cost', 'per ask closed', '', 'asks.jsonl joined to the workstream ledger'),
-             ('unit_cost', 'per stall cleared', '', 'none: nothing records a stall cleared')]
+             # a value that is not a class says the status: "pending" (a source not built yet) or "n/a" (no source exists)
+             ('unit_cost', 'per ask closed', 'pending', 'asks.jsonl joined to the workstream ledger'),
+             ('unit_cost', 'per stall cleared', 'n/a', 'none: nothing records a stall cleared')]
 
     def unit_run(self, counts, units=None, script=None):
         # director session ds: 3 relays, 2 merge-guard calls, 1 card-ingest call and the director skill call
