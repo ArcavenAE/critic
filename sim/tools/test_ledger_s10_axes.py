@@ -575,15 +575,41 @@ class T(unittest.TestCase):
         u = unit.get('per ask closed', {})
         self.assertEqual((u.get('unit_usd_micro'), u.get('source')), ('n/a', 'asks.jsonl, intake rows joined to close rows by ask_id'))
 
+    def test_a_class_the_run_did_not_find_prints_n_a_but_a_found_class_at_zero_prints_zero(self):
+        # per relay's class (intake and relay) is found with a priced request; per merge's class is absent from the run;
+        # a third unit names a class the map never defines. With counts given for all, only the found class has a cost.
+        units = [('unit_cost', 'per relay', 'intake and relay', 'relay-log entries'),
+                 ('unit_cost', 'per merge', 'merge gate', 'GitHub merged-PR list'),
+                 ('unit_cost', 'per typo', 'merge gatng', 'nowhere')]
+        counts = [('per relay', '2'), ('per merge', '4'), ('per typo', '4')]
+        t = self.unit_run(counts, units)
+        got = {u: (r['unit_usd_micro'], r['source']) for u, r in t.items()}
+        self.assertEqual(got, {'per relay': (str(3 * self.REQ // 2), 'relay-log entries'),
+                               'per merge': ('n/a', 'GitHub merged-PR list'),
+                               'per typo': ('n/a', 'nowhere')})
+        # a class that is found and cost nothing (a request with no tokens) is a true zero, and prints 0
+        free = rec_use('ds', 900, [self.SEND])
+        free['message']['usage'] = {'input_tokens': 0, 'output_tokens': 0, 'cache_read_input_tokens': 0,
+                                    'cache_creation_input_tokens': 0}
+        res = run(SCRIPT, [('ds', None, [rec('ds', 899, '/srv/demo-orch/x', skill='director'), free])],
+                  maprows=self.sig_rows() + units[:1], counts=[('per relay', '2')])
+        t = {r['unit']: r for r in (res.get('unit-costs.csv') or [])}
+        self.assertEqual((t['per relay']['class_usd_micro'], t['per relay']['unit_usd_micro']), ('0', '0'))
+
+    def test_absent_class_mutants_turn_red(self):
+        units = [('unit_cost', 'per merge', 'merge gate', 'GitHub merged-PR list')]
+        good = self.unit_run([('per merge', '4')], units)
+        for a, b in (("usd=dirrows[val]['usd_micro'] if val in dirrows else None", "usd=dirrows[val]['usd_micro'] if val in dirrows else 0"),):
+            self.assertNotEqual(self.unit_run([('per merge', '4')], units, script=self.mutant(a, b)), good, a)
 
     def test_unit_cost_mutants_turn_red(self):
         counts = [('per relay', '2'), ('per operator decision', '0'), ('per stall cleared', '9')]   # per merge is absent
         good = self.unit_run(counts)
-        for a, b, n in (("round(usd/cnt) if cnt else 'n/a'", "round(usd/cnt) if cnt else 0", 2),
-                        ("'pending' if val=='pending' else 'n/a'", "'n/a'", 1),
-                        ("usd=dirrows[val]['usd_micro'] if val in dirrows else 0", "usd=0", 1),
-                        ("cnt=UNIT_COUNTS.get(unit)", "cnt=UNIT_COUNTS.get(unit,1)", 1)):
-            self.assertNotEqual(self.unit_run(counts, script=self.mutant(a, b, n)), good, a)
+        for a, b in (("round(usd/cnt) if cnt and usd is not None else 'n/a'", "round(usd/cnt) if cnt and usd is not None else 0"),
+                     ("'pending' if val=='pending' else 'n/a'", "'n/a'"),
+
+                     ("cnt=UNIT_COUNTS.get(unit)", "cnt=UNIT_COUNTS.get(unit,1)")):
+            self.assertNotEqual(self.unit_run(counts, script=self.mutant(a, b)), good, a)
 
     def test_asks_join_mutants_turn_red(self):
         good = self.ask_run(self.asks_rows())[1]
