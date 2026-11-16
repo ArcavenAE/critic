@@ -1067,38 +1067,47 @@ class T(unittest.TestCase):
 
     def test_a_month_that_is_not_yyyy_mm_is_refused_before_any_output(self):
         with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, 'prices.json'), 'w') as fh:
+                json.dump(PRICES, fh)
+            with open(os.path.join(d, 'map.csv'), 'w', newline='') as fh:
+                csv.writer(fh).writerows(MAP)
             for bad in ('november', '2026-13', '2026-1', '202611'):
-                out = os.path.join(d, 'out-' + bad)
-                with open(os.path.join(d, 'prices.json'), 'w') as fh:
-                    json.dump(PRICES, fh)
-                with open(os.path.join(d, 'map.csv'), 'w', newline='') as fh:
-                    csv.writer(fh).writerows(MAP)
-                r = subprocess.run([sys.executable, '-I', SCRIPT, out, os.path.join(d, 'prices.json'), 'demo',
-                                    os.path.join(d, 'map.csv'), d, d, '', bad], capture_output=True, text=True,
-                                   env=dict(os.environ, LEDGER_REPO_CACHE=os.path.join(d, 'cache.csv')))
-                self.assertNotEqual(r.returncode, 0, bad)
-                self.assertIn('month', r.stderr, bad)
-                self.assertFalse(os.path.exists(os.path.join(out, 'unattributed-sessions.csv')), bad)
+                with self.subTest(bad):
+                    out = os.path.join(d, 'out-' + bad)
+                    r = subprocess.run([sys.executable, '-I', SCRIPT, out, os.path.join(d, 'prices.json'), 'demo',
+                                        os.path.join(d, 'map.csv'), d, d, '', bad], capture_output=True, text=True,
+                                       env=dict(os.environ, LEDGER_REPO_CACHE=os.path.join(d, 'cache.csv')))
+                    self.assertNotEqual(r.returncode, 0)
+                    self.assertIn('month', r.stderr)
+                    # no output file of any kind: the out directory is absent or empty
+                    self.assertEqual(os.listdir(out) if os.path.isdir(out) else [], [])
 
     def test_waits_under_either_director_tool_spelling_are_hub_wait(self):
         waits = ['mcp__director__wait_for_message', 'mcp__director-mcp__wait_for_message',
                  'mcp__director__inbox_summary', 'mcp__director-mcp__inbox_summary']
         labels = ['acme-builder-g1-0', 'acme-reviewer-g1-0', 'acme-architect-g1-0', 'acme-envoy-g1-0']
         s = [('w%d' % i, lab, [rec('w%d' % i, 810 + i, tools=[w])]) for i, (lab, w) in enumerate(zip(labels, waits))]
+        # Only the two named wait tools are waits, under either spelling: another director tool is work, not a wait.
+        s += [('x1', 'acme-filer-g1-0', [rec('x1', 820, tools=['mcp__director-mcp__send_message'])]),
+              ('x2', 'acme-maintainer-g1-0', [rec('x2', 821, tools=['mcp__director__send_message'])])]
         got = {r['label_base']: r['activity'] for r in run(SCRIPT, s)['by-seat-label.csv']}
         self.assertEqual(got, {'acme-builder': self.HUB, 'acme-reviewer': self.HUB, 'acme-architect': self.HUB,
-                               'acme-envoy': self.HUB})
+                               'acme-envoy': self.HUB, 'acme-filer': 'filing', 'acme-maintainer': 'maintenance'})
 
     def test_director_calls_count_under_either_spelling_for_the_majority_rule(self):
         a, b = 'mcp__director__send_message', self.SEND_MCP
         s = [('m1', None, [rec('m1', 820, '/srv/demo-orch/x', tools=[b, b, 'Bash'])]),
              ('m2', None, [rec('m2', 821, '/srv/demo-orch/x', tools=[a, b, 'Bash'])]),
              ('m3', None, [rec('m3', 822, '/srv/demo-orch/x', tools=[b, 'Bash', 'Read'])]),
-             ('m4', None, [rec('m4', 823, '/srv/demo-orch/x', tools=['mcp__directory__send_message'] * 2 + ['Bash'])])]
+             ('m4', None, [rec('m4', 823, '/srv/demo-orch/x', tools=['mcp__directory__send_message'] * 2 + ['Bash'])]),
+             # exactly half is not a majority, whatever the spelling: 1 of 2, and 2 of 4 with both spellings
+             ('m5', None, [rec('m5', 824, '/srv/demo-orch/x', tools=[b, 'Bash'])]),
+             ('m6', None, [rec('m6', 825, '/srv/demo-orch/x', tools=[a, b, 'Bash', 'Read'])])]
         h = lambda x: hashlib.sha256(x.encode()).hexdigest()[:12]
         got = {r['session_hash']: (r['class'], r['director_rule']) for r in run(SCRIPT, s)['unattributed-sessions.csv']}
         self.assertEqual(got, {h('m1'): (self.DIR, 'mcp-majority'), h('m2'): (self.DIR, 'mcp-majority'),
-                               h('m3'): (self.ORCH, ''), h('m4'): (self.ORCH, '')})
+                               h('m3'): (self.ORCH, ''), h('m4'): (self.ORCH, ''), h('m5'): (self.ORCH, ''),
+                               h('m6'): (self.ORCH, '')})
 
     def test_a_director_slash_command_in_a_user_turn_counts_for_the_skill_rule(self):
         def user(sid, n, content, ts='2026-10-05T10:00:00Z'):
