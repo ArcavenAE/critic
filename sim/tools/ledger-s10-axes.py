@@ -41,8 +41,8 @@
 #                  and is never kept: only each segment's first three words and the bashtext needles that hit are held.
 # Asks closed: ASKS_JSONL, an optional seventh argument, is a director asks.jsonl (intake rows and close rows). Its intake rows
 # are joined to its own close rows by ask_id; asks-closed.csv counts the asks closed in the audit month by how they closed
-# (one close per ask; a close with no intake row or outside the month is not counted). Only ask_id, event, closed_at and as
-# are read: the text and reason fields are never looked at. A unit_cost row whose value is join:asks is that count's unit cost
+# (one close per ask; a close with no intake row or outside the month is not counted). Only ask_id, event, closed_at, received_at and as
+# are read (received_at only to tell an intake row): the text and reason fields are never looked at. A unit_cost row whose value is join:asks is that count's unit cost
 # over every director class, and prints "pending" when no asks file is given.
 # Unit costs: a unit_cost map row names a unit, its numerator class and its denominator's source. LEDGER_UNIT_COUNTS names a
 # CSV (unit,count; counts only) that supplies the denominators, which transcripts cannot. unit-costs.csv prints each unit's
@@ -133,7 +133,7 @@ def read_asks_closed(path):
     # how they closed. Only ask_id, event, closed_at and as are read; no other field is looked at and none is kept.
     # One close counts per ask; a close with no intake row, or outside the window, is not counted. None when unreadable.
     try: lines=open(path,errors='replace').read().splitlines()
-    except OSError: return None
+    except OSError: return 'unreadable'
     intake=set(); closes={}
     for line in lines:
         try: r=json.loads(line)
@@ -144,7 +144,8 @@ def read_asks_closed(path):
         elif isinstance(r.get('received_at'),str): intake.add(r['ask_id'])
     by=collections.Counter(how for a,(at,how) in closes.items() if a in intake and at.startswith(WINDOW))
     return by
-ASKS_CLOSED=read_asks_closed(sys.argv[7]) if len(sys.argv)>7 else None
+ASKS_PATH=sys.argv[7] if len(sys.argv)>7 else None
+ASKS_CLOSED=read_asks_closed(ASKS_PATH) if ASKS_PATH else None
 RESIDUAL='no class (no tool call in the session)'   # provisional name: the design names none
 NEEDLES=sorted({c[len('bashtext:'):] for cl,_ in DSIG for c in cl if c.startswith('bashtext:')})
 SEGSPLIT=re.compile(r'&&|\|\||;|\||\n'); ENVASSIGN=re.compile(r'^[A-Za-z_][A-Za-z0-9_]*=\S*\s+')
@@ -482,9 +483,12 @@ if UNITS:
     for unit,val,src in UNITS:
         if val=='join:asks':
             # numerator: every director class; denominator: asks closed, from the asks.jsonl join argument
-            if ASKS_CLOSED is None: rowsu.append([CLUSTER,unit,'','','',src,'pending']); continue
-            cnt=sum(ASKS_CLOSED.values()); usd=sum(c['usd_micro'] for c in dirrows.values())
-            rowsu.append([CLUSTER,unit,'all director classes',usd,cnt,src,round(usd/cnt) if cnt else 'n/a']); continue
+            if ASKS_PATH is None: rowsu.append([CLUSTER,unit,'','','',src,'pending']); continue
+            if ASKS_CLOSED=='unreadable': rowsu.append([CLUSTER,unit,'','','','asks file unreadable: '+ASKS_PATH,'n/a']); continue
+            # no director rows found (no director_sig rows in the map) means no cost to divide: n/a, never 0; a found set
+            # that sums to zero is a true zero
+            cnt=sum(ASKS_CLOSED.values()); usd=sum(c['usd_micro'] for c in dirrows.values()) if dirrows else None
+            rowsu.append([CLUSTER,unit,'all director classes','' if usd is None else usd,cnt,src,round(usd/cnt) if cnt and usd is not None else 'n/a']); continue
         if val in ('pending','n/a',''):
             rowsu.append([CLUSTER,unit,'','',str(UNIT_COUNTS[unit]) if unit in UNIT_COUNTS else '',src,'pending' if val=='pending' else 'n/a']); continue
         # A class the run did not find has no cost to divide: it prints n/a with its source, never 0. A class that was found and
@@ -492,7 +496,7 @@ if UNITS:
         cnt=UNIT_COUNTS.get(unit); usd=dirrows[val]['usd_micro'] if val in dirrows else None
         rowsu.append([CLUSTER,unit,val,'' if usd is None else usd,'' if cnt is None else cnt,src,round(usd/cnt) if cnt and usd is not None else 'n/a'])
     wr('unit-costs.csv',['cluster','unit','class','class_usd_micro','denominator','source','unit_usd_micro'],rowsu)
-if ASKS_CLOSED is not None:
+if isinstance(ASKS_CLOSED,collections.Counter):
     wr('asks-closed.csv',['cluster','as','closed'],[[CLUSTER,'all',sum(ASKS_CLOSED.values())]]+[[CLUSTER,k,ASKS_CLOSED[k]] for k in sorted(ASKS_CLOSED)])
 wr('by-token-class.csv',['cluster','token_class','requests','list_usd'],
    [[CLUSTER,nm,tk[nm]['requests'],round(tk[nm]['usd_micro']/1e6,2)] for nm in TOKEN_CLASSES])

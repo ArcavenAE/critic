@@ -607,11 +607,10 @@ class T(unittest.TestCase):
     def test_unit_cost_mutants_turn_red(self):
         counts = [('per relay', '2'), ('per operator decision', '0'), ('per stall cleared', '9')]   # per merge is absent
         good = self.unit_run(counts)
-        for a, b in (("round(usd/cnt) if cnt and usd is not None else 'n/a'", "round(usd/cnt) if cnt and usd is not None else 0"),
-                     ("'pending' if val=='pending' else 'n/a'", "'n/a'"),
-
-                     ("cnt=UNIT_COUNTS.get(unit)", "cnt=UNIT_COUNTS.get(unit,1)")):
-            self.assertNotEqual(self.unit_run(counts, script=self.mutant(a, b)), good, a)
+        for a, b, n in (("round(usd/cnt) if cnt and usd is not None else 'n/a'", "round(usd/cnt) if cnt and usd is not None else 0", 2),
+                        ("'pending' if val=='pending' else 'n/a'", "'n/a'", 1),
+                        ("cnt=UNIT_COUNTS.get(unit)", "cnt=UNIT_COUNTS.get(unit,1)", 1)):
+            self.assertNotEqual(self.unit_run(counts, script=self.mutant(a, b, n)), good, a)
 
     def ask_cells(self, maprows, recs, asks=None, asks_path=None):
         res = run(SCRIPT, [('ds', None, recs)], maprows=maprows, asks=asks, asks_path=asks_path)
