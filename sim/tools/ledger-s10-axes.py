@@ -29,6 +29,14 @@
 #                                                           (coordination)" and is written to by-director-class.csv. A request
 #                                                           is its set of tool_use blocks (counted by id across records).
 #                  match syntax, clauses joined with & must all hold:
+#   director_split match = a sub-line class, value = the parent class it was split from (a class some director_sig row
+#                                                           produces). When any director_split row exists, director-split-bridge.csv
+#                                                           is written in whole micro-dollars and requests, per parent: a memo line
+#                                                           (the parent's own requests and cost plus every sub-line's, the parent's
+#                                                           figure before the split), a new line for the parent's residual and one per
+#                                                           sub-line (0 requests when the run never produced it), and a bridge line
+#                                                           (the sum of the sub-lines). Identity: memo = residual + bridge. The file
+#                                                           is not written without director_split rows; no other output changes.
 #                    tool:NAME        some block is named NAME (a trailing * makes NAME a prefix)
 #                    all:A|B          the request has tool blocks and every one is named A or B
 #                    bash:WORDS       some segment of some Bash command starts with those words, after leading
@@ -116,6 +124,8 @@ OWNSKILL=dict(MAP['own_skill'])
 ORCHR=[(re.compile(m),v) for m,v in MAP['orchestrator']]
 # Director signature table: rows in map order, each a list of clauses that must all hold (see the header).
 DSIG=[([c.strip() for c in m.split('&')],v) for m,v in MAP['director_sig']]
+# Director split: sub-line class -> parent class. A parent is itself never a sub-line, so a family is one level deep.
+SPLITOF=dict(MAP['director_split']); PARENTS=set(SPLITOF.values())
 DSIG_VERSION=(MAP['director_sig_version'][0][1] or 'unversioned') if MAP['director_sig_version'] else ('unversioned' if DSIG else 'none')
 # Unit-cost table (a map kind, so a rename needs no code change): match = unit name, value = the numerator class (a
 # director class from by-director-class.csv) or a status word, "pending" or "n/a", note = the denominator's source name.
@@ -412,6 +422,7 @@ seatrows=collections.defaultdict(lambda:collections.Counter())
 daily=collections.defaultdict(lambda:collections.Counter())
 sess=collections.defaultdict(lambda:collections.Counter()); sessmeta={}
 bymethod=collections.Counter(); bridge=collections.defaultdict(lambda:collections.Counter()); HUBWAIT='hub wait (bus polling)'; MOVED='moved from hub wait to director sessions'
+famrows=collections.defaultdict(lambda:collections.Counter())
 dirrows=collections.defaultdict(lambda:collections.Counter()); inhrows=collections.defaultdict(lambda:collections.Counter())
 TOKEN_CLASSES=('input','cache write','cache read','output')
 tk=collections.defaultdict(lambda:collections.Counter())
@@ -434,6 +445,10 @@ for e in msgs.values():
             dx['requests']+=1
             if p: dx['usd_micro']+=usd
             else: dx['unpriced']+=1
+        fam=SPLITOF.get(e['dclass'],e['dclass'])
+        if fam in PARENTS:
+            fx=famrows[fam]; fx['requests']+=1
+            if p: fx['usd_micro']+=usd
     if p:
         c['usd_micro']+=usd; sc['usd_micro']+=usd; dc['usd_micro']+=usd
         for nm,n_tok,cost in (('input',e['in'],e['in']*p['in']),('cache write',e['cw5v']+e['cw1'],e['cw5v']*p['cw5']+e['cw1']*p['cw1']),
@@ -520,6 +535,18 @@ if DSIG:
        [[CLUSTER,k[0],k[1],c['requests'],c['unpriced'],round(c['usd_micro']/1e6,2)] for k,c in sorted(inhrows.items(),key=lambda kc:(kc[0][0],kc[0][1]))])
     wr('by-director-class.csv',['cluster','class','requests','unpriced','list_usd'],
        [[CLUSTER,k,c['requests'],c['unpriced'],round(c['usd_micro']/1e6,2)] for k,c in sorted(dirrows.items(),key=lambda kc:(-kc[1]['usd_micro'],kc[0]))])
+if SPLITOF:
+    # Per parent: memo = the family's own accumulation over every request (parent and sub-lines), and the lines are read from the
+    # per-class rows, so the identity memo = residual + bridge is a check and not a restatement.
+    def cnt(k,f): return dirrows[k][f] if k in dirrows else 0
+    srows=[]
+    for par in sorted(PARENTS):
+        subs=sorted(k for k,v in SPLITOF.items() if v==par)
+        srows.append([CLUSTER,par,'memo',par,famrows[par]['requests'],famrows[par]['usd_micro']])
+        srows.append([CLUSTER,par,'new',par,cnt(par,'requests'),cnt(par,'usd_micro')])
+        srows+=[[CLUSTER,par,'new',k,cnt(k,'requests'),cnt(k,'usd_micro')] for k in subs]
+        srows.append([CLUSTER,par,'bridge',par,sum(cnt(k,'requests') for k in subs),sum(cnt(k,'usd_micro') for k in subs)])
+    wr('director-split-bridge.csv',['cluster','parent','line','row','requests','usd_micro'],srows)
 wr('daily-by-model.csv',['cluster','day','model','requests','list_usd','unpriced'],
    [[CLUSTER,d,m,c['requests'],round(c['usd_micro']/1e6,2),c['unpriced']] for (d,m),c in sorted(daily.items())])
 def signin():
