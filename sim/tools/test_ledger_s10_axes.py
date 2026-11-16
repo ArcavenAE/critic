@@ -1292,9 +1292,11 @@ class T(unittest.TestCase):
         self.assertIn(typo, lines[0])
         # the output is as it was: the bridge is still written, under the parent the map names
         self.assertEqual({r['parent'] for r in bad[self.SPLIT_FILE]}, {typo})
-        # the residual class is a parent the guard accepts
+        # the session-level residual is no director class, so a split row naming it as parent is named as well
         res = self.split_rows_run([('director_split', self.SPLIT_A, self.RESIDUAL, '')])
-        self.assertEqual(res['_stderr'], '')
+        lines = [l for l in res['_stderr'].splitlines() if l.strip()]
+        self.assertEqual(len(lines), 1)
+        self.assertIn(self.RESIDUAL, lines[0])
 
     def test_a_sub_line_named_in_two_split_rows_prints_one_stderr_line_and_the_last_row_wins(self):
         both = self.split_rows_run([('director_split', self.SPLIT_A, self.FC, ''), ('director_split', self.SPLIT_A, self.DO, '')])
