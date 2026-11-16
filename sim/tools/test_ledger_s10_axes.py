@@ -1053,6 +1053,40 @@ class T(unittest.TestCase):
         self.assertEqual(sorted(set(s12) - set(s11)), sorted(want))
         self.assertIn('cached list rates', s12['_source'])
 
+    def test_prices_s13_is_s12_plus_fable_5_2_and_mythos_5_1_from_a_named_public_source(self):
+        with open(os.path.join(HERE, 'prices-s12.json')) as fh:
+            s12 = json.load(fh)
+        self.assertTrue(os.path.exists(os.path.join(HERE, 'prices-s13.json')), 'prices-s13.json is missing')
+        with open(os.path.join(HERE, 'prices-s13.json')) as fh:
+            s13 = json.load(fh)
+        for k, v in s12.items():
+            if k != '_source':
+                self.assertEqual(s13.get(k), v)
+        want = {'claude-fable-5-2': (8.0, 40.0, 0.2, 10.0, 16.0), 'claude-mythos-5-1': (10.0, 50.0, 0.25, 12.5, 20.0)}
+        self.assertEqual(sorted(set(s13) - set(s12)), sorted(want))
+        for k, (i, o, cr, w5, w1) in want.items():
+            self.assertEqual((s13[k]['in'], s13[k]['out'], s13[k]['cr'], s13[k]['cw5'], s13[k]['cw1']), (i, o, cr, w5, w1))
+        # a figure with no named public source is not allowed: the header's added sentence names the page and the date read
+        src = s13['_source']
+        self.assertIn(s12['_source'], src)
+        self.assertIn('Added 2026-11-16, read from the published pricing table at https://platform.claude.com/docs/en/about-claude/pricing on 2026-11-16', src)
+        for k in want:
+            self.assertIn(k, src)
+
+    def test_a_run_with_fable_5_2_and_mythos_5_1_reports_both_as_priced(self):
+        self.assertTrue(os.path.exists(os.path.join(HERE, 'prices-s13.json')), 'prices-s13.json is missing')
+        with open(os.path.join(HERE, 'prices-s13.json')) as fh:
+            prices = json.load(fh)
+        recs = []
+        for n, model in enumerate(('claude-fable-5-2', 'claude-mythos-5-1')):
+            r = rec('pm', 300 + n)
+            r['message']['model'] = model
+            r['message']['usage'] = {'input_tokens': 1000000, 'output_tokens': 1000000}
+            recs.append(r)
+        rows = {r['model']: r for r in run(SCRIPT, [('pm', None, recs)], prices=prices)['daily-by-model.csv']}
+        self.assertEqual({k: (v['unpriced'], v['list_usd']) for k, v in rows.items()},
+                         {'claude-fable-5-2': ('0', '48.0'), 'claude-mythos-5-1': ('0', '60.0')})
+
     # ---- I-461: how the director's sessions are attributed (month argument, both tool spellings, /director) ----
     SEND_MCP = 'mcp__director-mcp__send_message'
 
