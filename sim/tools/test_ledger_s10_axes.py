@@ -546,12 +546,18 @@ class T(unittest.TestCase):
         t = {r['unit']: r for r in (res.get('unit-costs.csv') or [])}
         self.assertEqual((t['per relay']['class_usd_micro'], t['per relay']['unit_usd_micro']), ('0', '0'))
 
+    def test_absent_class_mutants_turn_red(self):
+        units = [('unit_cost', 'per merge', 'merge gate', 'GitHub merged-PR list')]
+        good = self.unit_run([('per merge', '4')], units)
+        for a, b in (("usd=dirrows[val]['usd_micro'] if val in dirrows else None", "usd=dirrows[val]['usd_micro'] if val in dirrows else 0"),):
+            self.assertNotEqual(self.unit_run([('per merge', '4')], units, script=self.mutant(a, b)), good, a)
+
     def test_unit_cost_mutants_turn_red(self):
         counts = [('per relay', '2'), ('per operator decision', '0'), ('per stall cleared', '9')]   # per merge is absent
         good = self.unit_run(counts)
-        for a, b in (("round(usd/cnt) if cnt else 'n/a'", "round(usd/cnt) if cnt else 0"),
+        for a, b in (("round(usd/cnt) if cnt and usd is not None else 'n/a'", "round(usd/cnt) if cnt and usd is not None else 0"),
                      ("'pending' if val=='pending' else 'n/a'", "'n/a'"),
-                     ("usd=dirrows[val]['usd_micro'] if val in dirrows else 0", "usd=0"),
+
                      ("cnt=UNIT_COUNTS.get(unit)", "cnt=UNIT_COUNTS.get(unit,1)")):
             self.assertNotEqual(self.unit_run(counts, script=self.mutant(a, b)), good, a)
 

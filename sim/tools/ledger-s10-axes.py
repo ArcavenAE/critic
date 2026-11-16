@@ -454,13 +454,15 @@ wr('director-wait-bridge.csv',['cluster','line','row','requests','usd_micro'],
     (('memo',HUBWAIT),('memo',C_DIR),('new',HUBWAIT),('new',C_DIR),('bridge',MOVED))])
 if UNITS:
     # A unit's cost is its class's list cost over a counted denominator, in whole micro-dollars. A zero, missing or absent
-    # count prints "n/a" with the source named, never 0; a unit whose value is a status word prints that word.
+    # count, or a class the run did not find, prints "n/a" with the source named, never 0; a unit whose value is a status word prints that word.
     rowsu=[]
     for unit,val,src in UNITS:
         if val in ('pending','n/a',''):
             rowsu.append([CLUSTER,unit,'','',str(UNIT_COUNTS[unit]) if unit in UNIT_COUNTS else '',src,'pending' if val=='pending' else 'n/a']); continue
-        cnt=UNIT_COUNTS.get(unit); usd=dirrows[val]['usd_micro'] if val in dirrows else 0
-        rowsu.append([CLUSTER,unit,val,usd,'' if cnt is None else cnt,src,round(usd/cnt) if cnt else 'n/a'])
+        # A class the run did not find has no cost to divide: it prints n/a with its source, never 0. A class that was found and
+        # cost nothing is a true zero and prints 0.
+        cnt=UNIT_COUNTS.get(unit); usd=dirrows[val]['usd_micro'] if val in dirrows else None
+        rowsu.append([CLUSTER,unit,val,'' if usd is None else usd,'' if cnt is None else cnt,src,round(usd/cnt) if cnt and usd is not None else 'n/a'])
     wr('unit-costs.csv',['cluster','unit','class','class_usd_micro','denominator','source','unit_usd_micro'],rowsu)
 wr('by-token-class.csv',['cluster','token_class','requests','list_usd'],
    [[CLUSTER,nm,tk[nm]['requests'],round(tk[nm]['usd_micro']/1e6,2)] for nm in TOKEN_CLASSES])
