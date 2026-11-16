@@ -66,7 +66,7 @@ def rec_use(sid, n, uses, cwd='/srv/demo-orch/x', ts='2026-10-05T10:00:00Z'):
                       'cache_creation_input_tokens': 0}}}
 
 
-def run(script, sessions, launch_lines=(), gz_lines=(), prices=None, mkout=True, cache=None, maprows=(), counts=None, asks=None, asks_path=None):
+def run(script, sessions, launch_lines=(), gz_lines=(), prices=None, mkout=True, cache=None, maprows=(), counts=None, asks=None, asks_path=None, month=None):
     """sessions: list of (sid, agent_name or None, [records]). Returns {file: rows} from the output dir."""
     with tempfile.TemporaryDirectory() as d:
         proj = os.path.join(d, 'cfg', 'projects', 'p'); os.makedirs(proj)
@@ -104,6 +104,11 @@ def run(script, sessions, launch_lines=(), gz_lines=(), prices=None, mkout=True,
             argv.append(os.path.join(d, 'asks.jsonl'))
         if asks_path is not None:
             argv.append(asks_path)
+        if month is not None:
+            # the month is the eighth argument, after the asks file; an empty asks argument means none
+            if len(argv) == 2:
+                argv.append('')
+            argv.append(month)
         r = subprocess.run([sys.executable, '-I', script, out, os.path.join(d, 'prices.json'), 'demo',
                             os.path.join(d, 'map.csv')] + argv,
                            capture_output=True, text=True, env=env)
@@ -1047,6 +1052,119 @@ class T(unittest.TestCase):
             self.assertEqual((s12[k]['in'], s12[k]['out'], s12[k]['cr'], s12[k]['cw5'], s12[k]['cw1']), (i, o, cr, w5, w1))
         self.assertEqual(sorted(set(s12) - set(s11)), sorted(want))
         self.assertIn('cached list rates', s12['_source'])
+
+    # ---- I-461: how the director's sessions are attributed (month argument, both tool spellings, /director) ----
+    SEND_MCP = 'mcp__director-mcp__send_message'
+
+    def test_the_audit_month_is_an_argument_and_defaults_to_october_2026(self):
+        s = [('o1', None, [rec('o1', 800, '/srv/demo-orch/x', ts='2026-10-05T10:00:00Z')]),
+             ('n1', None, [rec('n1', 801, '/srv/demo-orch/x', ts='2026-11-05T10:00:00Z')])]
+        h = lambda x: hashlib.sha256(x.encode()).hexdigest()[:12]
+        hashes = lambda **kw: {r['session_hash'] for r in run(SCRIPT, s, **kw)['unattributed-sessions.csv']}
+        self.assertEqual(hashes(), {h('o1')})
+        self.assertEqual(hashes(month='2026-11'), {h('n1')})
+        self.assertEqual(hashes(month='2026-10'), {h('o1')})
+
+    def test_a_month_that_is_not_yyyy_mm_is_refused_before_any_output(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, 'prices.json'), 'w') as fh:
+                json.dump(PRICES, fh)
+            with open(os.path.join(d, 'map.csv'), 'w', newline='') as fh:
+                csv.writer(fh).writerows(MAP)
+            for bad in ('november', '2026-13', '2026-1', '202611'):
+                with self.subTest(bad):
+                    out = os.path.join(d, 'out-' + bad)
+                    r = subprocess.run([sys.executable, '-I', SCRIPT, out, os.path.join(d, 'prices.json'), 'demo',
+                                        os.path.join(d, 'map.csv'), d, d, '', bad], capture_output=True, text=True,
+                                       env=dict(os.environ, LEDGER_REPO_CACHE=os.path.join(d, 'cache.csv')))
+                    self.assertNotEqual(r.returncode, 0)
+                    self.assertIn('month', r.stderr)
+                    # no output file of any kind: the out directory is absent or empty
+                    self.assertEqual(os.listdir(out) if os.path.isdir(out) else [], [])
+
+    def test_waits_under_either_director_tool_spelling_are_hub_wait(self):
+        waits = ['mcp__director__wait_for_message', 'mcp__director-mcp__wait_for_message',
+                 'mcp__director__inbox_summary', 'mcp__director-mcp__inbox_summary']
+        labels = ['acme-builder-g1-0', 'acme-reviewer-g1-0', 'acme-architect-g1-0', 'acme-envoy-g1-0']
+        s = [('w%d' % i, lab, [rec('w%d' % i, 810 + i, tools=[w])]) for i, (lab, w) in enumerate(zip(labels, waits))]
+        # Only the two named wait tools are waits, under either spelling: another director tool is work, not a wait.
+        s += [('x1', 'acme-filer-g1-0', [rec('x1', 820, tools=['mcp__director-mcp__send_message'])]),
+              ('x2', 'acme-maintainer-g1-0', [rec('x2', 821, tools=['mcp__director__send_message'])])]
+        got = {r['label_base']: r['activity'] for r in run(SCRIPT, s)['by-seat-label.csv']}
+        self.assertEqual(got, {'acme-builder': self.HUB, 'acme-reviewer': self.HUB, 'acme-architect': self.HUB,
+                               'acme-envoy': self.HUB, 'acme-filer': 'filing', 'acme-maintainer': 'maintenance'})
+
+    def test_director_calls_count_under_either_spelling_for_the_majority_rule(self):
+        a, b = 'mcp__director__send_message', self.SEND_MCP
+        s = [('m1', None, [rec('m1', 820, '/srv/demo-orch/x', tools=[b, b, 'Bash'])]),
+             ('m2', None, [rec('m2', 821, '/srv/demo-orch/x', tools=[a, b, 'Bash'])]),
+             ('m3', None, [rec('m3', 822, '/srv/demo-orch/x', tools=[b, 'Bash', 'Read'])]),
+             ('m4', None, [rec('m4', 823, '/srv/demo-orch/x', tools=['mcp__directory__send_message'] * 2 + ['Bash'])]),
+             # exactly half is not a majority, whatever the spelling: 1 of 2, and 2 of 4 with both spellings
+             ('m5', None, [rec('m5', 824, '/srv/demo-orch/x', tools=[b, 'Bash'])]),
+             ('m6', None, [rec('m6', 825, '/srv/demo-orch/x', tools=[a, b, 'Bash', 'Read'])])]
+        h = lambda x: hashlib.sha256(x.encode()).hexdigest()[:12]
+        got = {r['session_hash']: (r['class'], r['director_rule']) for r in run(SCRIPT, s)['unattributed-sessions.csv']}
+        self.assertEqual(got, {h('m1'): (self.DIR, 'mcp-majority'), h('m2'): (self.DIR, 'mcp-majority'),
+                               h('m3'): (self.ORCH, ''), h('m4'): (self.ORCH, ''), h('m5'): (self.ORCH, ''),
+                               h('m6'): (self.ORCH, '')})
+
+    def test_a_director_slash_command_in_a_user_turn_counts_for_the_skill_rule(self):
+        def user(sid, n, content, ts='2026-10-05T10:00:00Z'):
+            return {'type': 'user', 'timestamp': ts, 'sessionId': sid, 'cwd': '/srv/demo-orch/x', 'uuid': 'uu%s' % n,
+                    'message': {'role': 'user', 'content': content}}
+        cmd = '<command-message>director</command-message>\n<command-name>/director</command-name>'
+        s = [('c1', None, [user('c1', 830, cmd), rec('c1', 830, '/srv/demo-orch/x')]),
+             ('c2', None, [user('c2', 831, [{'type': 'text', 'text': cmd}]), rec('c2', 831, '/srv/demo-orch/x')]),
+             ('c3', None, [user('c3', 832, '<command-name>/directory</command-name>'), rec('c3', 832, '/srv/demo-orch/x')]),
+             ('c4', None, [user('c4', 833, 'please run /director for me'), rec('c4', 833, '/srv/demo-orch/x')]),
+             ('c5', None, [user('c5', 834, cmd, ts='2026-09-05T10:00:00Z'), rec('c5', 834, '/srv/demo-orch/x')]),
+             ('c6', None, [rec('c6', 835, '/srv/demo-orch/x')])]
+        h = lambda x: hashlib.sha256(x.encode()).hexdigest()[:12]
+        res = run(SCRIPT, s)
+        got = {r['session_hash']: (r['class'], r['director_rule']) for r in res['unattributed-sessions.csv']}
+        self.assertEqual(got, {h('c1'): (self.DIR, 'skill'), h('c2'): (self.DIR, 'skill'), h('c3'): (self.ORCH, ''),
+                               h('c4'): (self.ORCH, ''), h('c5'): (self.ORCH, ''), h('c6'): (self.ORCH, '')})
+        # a user turn is not a request: six assistant records, six requests
+        self.assertEqual(sum(int(r['requests']) for r in res['by-seat-label.csv']), 6)
+
+    def test_i461_mutants_turn_red(self):
+        h = lambda x: hashlib.sha256(x.encode()).hexdigest()[:12]
+        # the month argument: a script that ignores it still reads October
+        s = [('n1', None, [rec('n1', 840, '/srv/demo-orch/x', ts='2026-11-05T10:00:00Z')])]
+        m = self.mutant("WINDOW=MONTH   #", "WINDOW='2026-10'   #")
+        self.assertEqual({r['session_hash'] for r in run(SCRIPT, s, month='2026-11')['unattributed-sessions.csv']}, {h('n1')})
+        self.assertEqual(run(m, s, month='2026-11')['unattributed-sessions.csv'], [])
+        # the second tool spelling: a script that knows only mcp__director__ takes a director-mcp wait for work
+        w = [('w1', 'acme-builder-g1-0', [rec('w1', 841, tools=['mcp__director-mcp__wait_for_message'])])]
+        m = self.mutant("DIRPREFIX=('mcp__director__','mcp__director-mcp__')", "DIRPREFIX=('mcp__director__',)")
+        self.assertEqual(run(SCRIPT, w)['by-seat-label.csv'][0]['activity'], self.HUB)
+        self.assertNotEqual(run(m, w)['by-seat-label.csv'][0]['activity'], self.HUB)
+        # the slash command: a script that never reads user turns leaves the session in orchestration
+        u = {'type': 'user', 'timestamp': '2026-10-05T10:00:00Z', 'sessionId': 'c1', 'cwd': '/srv/demo-orch/x', 'uuid': 'uc1',
+             'message': {'role': 'user', 'content': '<command-name>/director</command-name>'}}
+        c = [('c1', None, [u, rec('c1', 842, '/srv/demo-orch/x')])]
+        m = self.mutant("if (r.get('timestamp') or '').startswith(WINDOW) and r.get('sessionId') and SLASHDIR.search(text):",
+                        "if False:")
+        self.assertEqual(run(SCRIPT, c)['unattributed-sessions.csv'][0]['class'], self.DIR)
+        self.assertEqual(run(m, c)['unattributed-sessions.csv'][0]['class'], self.ORCH)
+        # a user turn outside the month does not count
+        m = self.mutant("if (r.get('timestamp') or '').startswith(WINDOW) and r.get('sessionId') and SLASHDIR.search(text):",
+                        "if r.get('sessionId') and SLASHDIR.search(text):")
+        old = dict(u, timestamp='2026-09-05T10:00:00Z')
+        c = [('c1', None, [old, rec('c1', 842, '/srv/demo-orch/x')])]
+        self.assertEqual(run(SCRIPT, c)['unattributed-sessions.csv'][0]['class'], self.ORCH)
+        self.assertEqual(run(m, c)['unattributed-sessions.csv'][0]['class'], self.DIR)
+        # only the two named wait tools wait: a script that takes every director tool for a wait turns a send into hub wait
+        x = [('x1', 'acme-filer-g1-0', [rec('x1', 843, tools=['mcp__director-mcp__send_message'])])]
+        m = self.mutant("if e['tools'] and e['tools']<=WAIT:", "if e['tools'] and all(t.startswith(DIRPREFIX) for t in e['tools']):")
+        self.assertEqual(run(SCRIPT, x)['by-seat-label.csv'][0]['activity'], 'filing')
+        self.assertEqual(run(m, x)['by-seat-label.csv'][0]['activity'], self.HUB)
+        # exactly half of the calls under the second spelling is not a majority: >= for > makes it a director session
+        y = [('y1', None, [rec('y1', 844, '/srv/demo-orch/x', tools=['mcp__director-mcp__send_message', 'Bash'])])]
+        m = self.mutant("2*tc['director']>tc['n']", "2*tc['director']>=tc['n']")
+        self.assertEqual(run(SCRIPT, y)['unattributed-sessions.csv'][0]['class'], self.ORCH)
+        self.assertEqual(run(m, y)['unattributed-sessions.csv'][0]['class'], self.DIR)
 
 
 if __name__ == '__main__':

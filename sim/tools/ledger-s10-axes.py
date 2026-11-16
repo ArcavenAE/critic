@@ -5,7 +5,9 @@
 # git common dir and its origin remote, so worktrees map to their parent repo, else "unknown");
 # and goal, from the same map table. The script names no repo, team or goal; all of them live in
 # the map table, which the operator edits. Writes aggregate rows only. No transcript text out.
-# Usage: python3 -I ledger-s10-axes.py OUT_DIR PRICES_JSON CLUSTER_LABEL MAP_CSV [PROJECTS_ROOT [MARVEL_LOG_DIR [ASKS_JSONL]]]
+# Usage: python3 -I ledger-s10-axes.py OUT_DIR PRICES_JSON CLUSTER_LABEL MAP_CSV [PROJECTS_ROOT [MARVEL_LOG_DIR [ASKS_JSONL [MONTH]]]]
+#   MONTH is the audit month as YYYY-MM and defaults to 2026-10; an ASKS_JSONL of '' means none, so a month can be given alone.
+#   A run for another month needs no edited copy of this script. A MONTH that is not YYYY-MM is refused before any output.
 # MAP_CSV columns: kind,match,value,note. Kinds, applied in this order for goal:
 #   activity       match = activity name                 -> goal (applies to every repo)
 #   activity_repo  match = "activity|repo"               -> goal
@@ -96,6 +98,8 @@ import json,glob,os,re,collections,csv,sys,gzip,hashlib
 try: import fcntl
 except ImportError: fcntl=None
 from datetime import datetime,timezone
+MONTH=sys.argv[8] if len(sys.argv)>8 else '2026-10'
+if not re.fullmatch(r'\d{4}-(0[1-9]|1[0-2])',MONTH): sys.exit('month must be YYYY-MM, got %r'%MONTH)
 out=sys.argv[1]; os.makedirs(out,exist_ok=True); P=json.load(open(sys.argv[2])); CLUSTER=sys.argv[3]; MAPF=sys.argv[4]
 root=os.path.expanduser(sys.argv[5] if len(sys.argv)>5 else '~/.claude/projects')
 LOGDIR=os.path.expanduser(sys.argv[6] if len(sys.argv)>6 else '~/.marvel/log')
@@ -127,7 +131,7 @@ def read_unit_counts():
             return res
     except OSError: return {}
 UNIT_COUNTS=read_unit_counts()
-WINDOW='2026-10'   # the audit's month, as a timestamp prefix
+WINDOW=MONTH   # the audit's month, as a timestamp prefix
 def read_asks_closed(path):
     # Joins intake rows of an asks.jsonl to its own close rows by ask_id and counts the asks closed in the audit window, by
     # how they closed. Only ask_id, event, closed_at and as are read; no other field is looked at and none is kept.
@@ -144,7 +148,7 @@ def read_asks_closed(path):
         elif isinstance(r.get('received_at'),str): intake.add(r['ask_id'])
     by=collections.Counter(how for a,(at,how) in closes.items() if a in intake and at.startswith(WINDOW))
     return by
-ASKS_PATH=sys.argv[7] if len(sys.argv)>7 else None
+ASKS_PATH=(sys.argv[7] or None) if len(sys.argv)>7 else None
 ASKS_CLOSED=read_asks_closed(ASKS_PATH) if ASKS_PATH else None
 RESIDUAL='no class (no tool call in the session)'   # provisional name: the design names none
 NEEDLES=sorted({c[len('bashtext:'):] for cl,_ in DSIG for c in cl if c.startswith('bashtext:')})
@@ -184,7 +188,10 @@ def director_class(blocks):
     return 'unclassed'
 GOAL={k:dict(MAP[k]) for k in ('activity','activity_repo','team_first','repo','team')}
 SEAT=re.compile(r'^([a-z0-9]+(?:-[a-z0-9]+)*?)-g(\d+)-(\d+)$')
-WAIT={'mcp__director__wait_for_message','mcp__director__inbox_summary'}
+# The director tool prefix has two spellings in the transcripts: mcp__director__ and mcp__director-mcp__. Both count.
+DIRPREFIX=('mcp__director__','mcp__director-mcp__')
+WAIT={p+n for p in DIRPREFIX for n in ('wait_for_message','inbox_summary')}
+SLASHDIR=re.compile(r'<command-name>/director</command-name>')   # a /director slash command, as a user turn records it
 ROLES=['research-supervisor','supervisor','builder','reviewer','test-architect','architect','envoy','author','critic',
        'filer','maintainer','monitor','reader','writer','worker','editor','analyst','retrospector','introspector','sweeper',
        'fact-checker','merge-queue','researcher','director','lead','screener','panelist']
@@ -229,6 +236,12 @@ for f in glob.glob(root+'/**/*.jsonl',recursive=True):
             except Exception: continue
             t=r.get('type')
             if t=='agent-name' and r.get('agentName'): names[r.get('sessionId')]=r['agentName']; continue
+            if t=='user':
+                # A /director slash command in a user turn counts for the skill rule, as the Skill tool does in an assistant turn.
+                c=(r.get('message') or {}).get('content')
+                text=c if isinstance(c,str) else ' '.join(str(x.get('text') or '') for x in (c or []) if isinstance(x,dict) and x.get('type')=='text')
+                if (r.get('timestamp') or '').startswith(WINDOW) and r.get('sessionId') and SLASHDIR.search(text): skills[r['sessionId']].add('director')
+                continue
             if t!='assistant': continue
             ts=r.get('timestamp') or ''
             if not ts.startswith(WINDOW): continue
@@ -247,7 +260,7 @@ for f in glob.glob(root+'/**/*.jsonl',recursive=True):
                     seen_tu.add(key)
                     if DSIG: newblocks.append(sig_block(b))
                     toolcalls[r.get('sessionId')]['n']+=1
-                    if str(b.get('name') or '').startswith('mcp__director__'): toolcalls[r.get('sessionId')]['director']+=1
+                    if str(b.get('name') or '').startswith(DIRPREFIX): toolcalls[r.get('sessionId')]['director']+=1
             e=msgs.get(mid)
             if e is None:
                 e=msgs[mid]={'cwd':r.get('cwd') or '','ts':ts,'model':m.get('model'),'sid':r.get('sessionId'),'stream':f,'side':bool(r.get('isSidechain')) or sub,
