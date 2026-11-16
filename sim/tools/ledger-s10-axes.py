@@ -39,6 +39,11 @@
 #                  class (no tool call in the session)", a provisional name. by-director-inheritance.csv splits each class
 #                  by how its requests got it: direct, next, previous or none. The command text is read to match
 #                  and is never kept: only each segment's first three words and the bashtext needles that hit are held.
+# Director's waiting: the director test runs before the hub-wait test, so a director session's requests whose tools are all
+# bus waits are "director sessions (coordination)" and not "hub wait (bus polling)". director-wait-bridge.csv prints the old
+# hub-wait and director rows as memo lines, the new rows, and a bridge row naming what moved, in whole micro-dollars; new
+# hub wait plus the bridge equals the memo hub wait, and new director minus the bridge equals the memo director row.
+# hub_wait_usd in unattributed-sessions.csv stays the old (memo) figure.
 # Unmatched goal is "unmapped"; unmatched repo is "unknown". Both are reported as their own rows.
 # git runs in every cwd that no path rule claims, so the map's path rules must claim any root git
 # must not run in (quarantine and other read-only material). Git calls run with GIT_* cleared, so an
@@ -193,7 +198,7 @@ for f in glob.glob(root+'/**/*.jsonl',recursive=True):
             newblocks=[]
             for i,b in enumerate(m.get('content') or []):
                 if isinstance(b,dict) and b.get('type')=='tool_use':
-                    key=(mid,b['id']) if b.get('id') else ('noid',r.get('uuid'),i)
+                    key=(mid,b['id']) if b.get('id') else ('noid',mid,r.get('uuid'),i)
                     if key in seen_tu: continue
                     seen_tu.add(key)
                     if DSIG: newblocks.append(sig_block(b))
@@ -250,10 +255,13 @@ def inherit_director_classes():
             elif prv is not None: e['dclass'],e['dsrc']=prv,'previous'
             else: e['dclass'],e['dsrc']=RESIDUAL,'none'
 if DSIG: inherit_director_classes()
-def act(e,role,cls):
+def act(e,role,cls,dirfirst=True):
+    # dirfirst: the director test runs before the hub-wait test, so a director session's own pure-wait requests are
+    # director coordination and not fleet hub wait. dirfirst=False is the old order, kept for the memo lines.
     if e['model']=='<synthetic>': return 'synthetic'
     if e['err']: return 'api errors'
     if e['side']: return 'subagent work'
+    if dirfirst and role=='-' and cls==C_DIR: return cls
     if e['tools'] and e['tools']<=WAIT: return 'hub wait (bus polling)'
     if role=='-': return cls
     return {'builder':'building','reviewer':'review','research-supervisor':'research','supervisor':'supervision and relay','filer':'filing','maintainer':'maintenance','architect':'design','test-architect':'design','author':'design','envoy':'triage','critic':'review','reader':'research','analyst':'research','retrospector':'research','introspector':'research','writer':'design','editor':'design','worker':'building','fact-checker':'review','sweeper':'maintenance','researcher':'research','director':'supervision and relay','lead':'supervision and relay','screener':'review','panelist':'design'}.get(role,'other seat roles')
@@ -344,19 +352,24 @@ rows=collections.defaultdict(lambda:collections.Counter())
 seatrows=collections.defaultdict(lambda:collections.Counter())
 daily=collections.defaultdict(lambda:collections.Counter())
 sess=collections.defaultdict(lambda:collections.Counter()); sessmeta={}
-bymethod=collections.Counter(); dirrows=collections.defaultdict(lambda:collections.Counter()); inhrows=collections.defaultdict(lambda:collections.Counter())
+bymethod=collections.Counter(); bridge=collections.defaultdict(lambda:collections.Counter()); HUBWAIT='hub wait (bus polling)'; MOVED='moved from hub wait to director sessions'
+dirrows=collections.defaultdict(lambda:collections.Counter()); inhrows=collections.defaultdict(lambda:collections.Counter())
 TOKEN_CLASSES=('input','cache write','cache read','output')
 tk=collections.defaultdict(lambda:collections.Counter())
 for e in msgs.values():
     if e['model']=='<synthetic>': continue
     lab,team,role,method,base=seat(e['sid'])
     cls=uclass(e['sid'])[0] if role=='-' else None
-    a=act(e,role,cls); p=price(e['model']); repo=repo_of(e['cwd']); goal=goal_of(a,repo,team)
+    a=act(e,role,cls); a_old=act(e,role,cls,False); p=price(e['model']); repo=repo_of(e['cwd']); goal=goal_of(a,repo,team)
     usd=round((e['in']*p['in']+e['cw5v']*p['cw5']+e['cw1']*p['cw1']+e['cr']*p['cr']+e['out']*p['out'])) if p else 0
     k=(e['ts'][:10],repo,goal,a,team,role)
     c=rows[k]; c['requests']+=1; bymethod[method]+=1
     sk=(cls if cls else base,method,team,role,a); sc=seatrows[sk]; sc['requests']+=1
     dc=daily[(e['ts'][:10],e['model'])]; dc['requests']+=1
+    for line,act_name in (('memo',a_old),('new',a)):
+        if act_name in (HUBWAIT,C_DIR):
+            bx=bridge[(line,act_name)]; bx['requests']+=1; bx['usd_micro']+=usd
+    if a_old==HUBWAIT and a==C_DIR: bx=bridge[('bridge',MOVED)]; bx['requests']+=1; bx['usd_micro']+=usd
     if cls==C_DIR and DSIG:
         for dx in (dirrows[e['dclass']],inhrows[(e['dclass'],e['dsrc'])]):
             dx['requests']+=1
@@ -371,7 +384,7 @@ for e in msgs.values():
     else: c['unpriced']+=1; sc['unpriced']+=1; dc['unpriced']+=1
     if cls:
         x=sess[e['sid']]; x['requests']+=1; x['usd_micro']+=usd
-        if a=='hub wait (bus polling)': x['hub_micro']+=usd
+        if a_old=='hub wait (bus polling)': x['hub_micro']+=usd
         d=e['ts'][:10]; m=sessmeta.setdefault(e['sid'],[d,d]); m[0]=min(m[0],d); m[1]=max(m[1],d)
 def save_repo_cache():
     # Failure to write the sidecar never fails the run: the next run resolves again.
@@ -414,6 +427,11 @@ wr('by-seat-label.csv',['cluster','label_base','method','team','role','activity'
 wr('unattributed-sessions.csv',['cluster','session_hash','class','project_dir','rule','director_rule','first_day','last_day','requests','list_usd','hub_wait_usd'],
    [[CLUSTER,H(sid),uclass(sid)[0],uclass(sid)[1],uclass(sid)[2],uclass(sid)[3],sessmeta[sid][0],sessmeta[sid][1],c['requests'],round(c['usd_micro']/1e6,2),round(c['hub_micro']/1e6,2)]
     for sid,c in sorted(sess.items(),key=lambda kc:-kc[1]['usd_micro'])])
+# Director's waiting: the memo lines are the old hub-wait and director rows, the new lines are the rows after the director
+# test runs first, and the bridge is what moved. new hub + bridge = memo hub; new director - bridge = memo director.
+wr('director-wait-bridge.csv',['cluster','line','row','requests','usd_micro'],
+   [[CLUSTER,ln,rw,bridge[(ln,rw)]['requests'],bridge[(ln,rw)]['usd_micro']] for ln,rw in
+    (('memo',HUBWAIT),('memo',C_DIR),('new',HUBWAIT),('new',C_DIR),('bridge',MOVED))])
 wr('by-token-class.csv',['cluster','token_class','requests','list_usd'],
    [[CLUSTER,nm,tk[nm]['requests'],round(tk[nm]['usd_micro']/1e6,2)] for nm in TOKEN_CLASSES])
 if DSIG:

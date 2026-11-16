@@ -302,7 +302,7 @@ class T(unittest.TestCase):
 
     def test_by_id_counting_mutants_turn_red(self):
         for a, b in (("if key in seen_tu: continue", "pass"),
-                     ("key=(mid,b['id']) if b.get('id') else ('noid',r.get('uuid'),i)", "key=('noid',r.get('uuid'),i)")):
+                     ("key=(mid,b['id']) if b.get('id') else ('noid',mid,r.get('uuid'),i)", "key=('noid',mid,r.get('uuid'),i)")):
             got, want = self.split_message_classes(self.mutant(a, b))
             self.assertNotEqual(got, want)
 
@@ -430,6 +430,58 @@ class T(unittest.TestCase):
         cls, inh = self.inherit_run([('ds', [(1, [self.SEND])]), ('dsb', [(2, []), (3, [])])])
         self.assertEqual(cls, {self.IR: 1, self.RESIDUAL: 2})
         self.assertEqual(inh, {(self.IR, 'direct'): 1, (self.RESIDUAL, 'none'): 2})
+
+    HUB, DIRACT = 'hub wait (bus polling)', 'director sessions (coordination)'
+    REQ = (10 + 100 + 5) * 10000    # micro-dollars of one fixture request: input, cache read and output tokens at 10000 each
+
+    def bridge_run(self, script=None):
+        W = 'mcp__director__wait_for_message'
+        sessions = [('b1', 'acme-builder-claude-g1-0', [rec('b1', 601, tools=[W]), rec('b1', 602, tools=[W])]),
+                    ('ds', None, [rec_use('ds', 610, [W]), rec_use('ds', 611, [W]), rec_use('ds', 612, [W]),
+                                  rec_use('ds', 613, [self.SEND])])]
+        res = run(script or SCRIPT, sessions)
+        b = {(r['line'], r['row']): (int(r['requests']), int(r['usd_micro'])) for r in (res.get('director-wait-bridge.csv') or [])}
+        act = collections.Counter()
+        for r in res['axes-rows.csv']:
+            act[r['activity']] += int(r['requests'])
+        return b, act
+
+    MOVED = 'moved from hub wait to director sessions'
+
+    def test_director_waits_move_out_of_hub_wait_with_a_bridge_that_balances_to_the_micro_dollar(self):
+        b, act = self.bridge_run()
+        R = self.REQ
+        self.assertEqual(b, {('memo', self.HUB): (5, 5 * R), ('memo', self.DIRACT): (1, R),
+                             ('new', self.HUB): (2, 2 * R), ('new', self.DIRACT): (4, 4 * R),
+                             ('bridge', self.MOVED): (3, 3 * R)})
+        # new rows plus the bridge equal the old rows, and the two totals are equal
+        self.assertEqual(b[('new', self.HUB)][1] + b[('bridge', self.MOVED)][1], b[('memo', self.HUB)][1])
+        self.assertEqual(b[('new', self.DIRACT)][1] - b[('bridge', self.MOVED)][1], b[('memo', self.DIRACT)][1])
+        self.assertEqual(act[self.HUB], 2)
+        self.assertEqual(act[self.DIRACT], 4)
+
+    def noid_rows(self, script):
+        # No id and no uuid on any record: the key must still tell the three messages apart. Counted once each, the
+        # session holds two director calls of three and is a director session; keyed by position alone it holds one call.
+        def r(n, name):
+            return {'type': 'assistant', 'timestamp': '2026-10-05T10:00:00Z', 'sessionId': 'dn', 'cwd': '/srv/demo-orch/x',
+                    'requestId': 'r%s' % n, 'message': {'id': 'm%s' % n, 'model': MODEL, 'content': [{'type': 'tool_use', 'name': name}],
+                    'usage': {'input_tokens': 10, 'output_tokens': 5, 'cache_read_input_tokens': 100, 'cache_creation_input_tokens': 0}}}
+        s = [('dn', None, [r(701, 'Bash'), r(702, self.SEND), r(703, self.SEND)])]
+        return {x['session_hash']: (x['class'], x['director_rule']) for x in run(script, s)['unattributed-sessions.csv']}
+
+    def test_a_tool_use_block_without_an_id_is_keyed_by_its_message_too(self):
+        self.assertEqual(self.noid_rows(SCRIPT), {hashlib.sha256(b'dn').hexdigest()[:12]: (self.DIR, 'mcp-majority')})
+
+    def test_bridge_and_key_mutants_turn_red(self):
+        good, _ = self.bridge_run()
+        for a, b in (("    if dirfirst and role=='-' and cls==C_DIR: return cls\n", "    pass\n"),
+                     ("if a_old==HUBWAIT and a==C_DIR:", "if False:"),
+                     ("for line,act_name in (('memo',a_old),('new',a)):", "for line,act_name in (('memo',a),('new',a)):")):
+            self.assertNotEqual(self.bridge_run(self.mutant(a, b))[0], good, a)
+        for a, b in (("else ('noid',mid,r.get('uuid'),i)", "else ('noid',r.get('uuid'),i)"),):
+            m = self.mutant(a, b)
+            self.assertNotEqual(self.noid_rows(m), self.noid_rows(SCRIPT), a)
 
     def test_inheritance_mutants_turn_red(self):
         cases = [([('ds', [(1, [self.SEND]), (2, []), (3, [self.ROSTER])])]),
