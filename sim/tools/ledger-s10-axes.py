@@ -34,7 +34,10 @@
 #                                     split into segments on && || ; | and newlines, and every segment is tried
 #                    bashtext:TEXT    some Bash command contains TEXT
 #                    *                any request
-#                  A request with no tool block is "no tool call (not yet inherited)". The command text is read to match
+#                  A request with no tool block (text only) takes the class of the next tool-bearing request of its
+#                  stream (one transcript file in time order), else of the previous one, else the residual class "no
+#                  class (no tool call in the session)", a provisional name. by-director-inheritance.csv splits each class
+#                  by how its requests got it: direct, next, previous or none. The command text is read to match
 #                  and is never kept: only each segment's first three words and the bashtext needles that hit are held.
 # Unmatched goal is "unmapped"; unmatched repo is "unknown". Both are reported as their own rows.
 # git runs in every cwd that no path rule claims, so the map's path rules must claim any root git
@@ -94,7 +97,7 @@ ORCHR=[(re.compile(m),v) for m,v in MAP['orchestrator']]
 # Director signature table: rows in map order, each a list of clauses that must all hold (see the header).
 DSIG=[([c.strip() for c in m.split('&')],v) for m,v in MAP['director_sig']]
 DSIG_VERSION=(MAP['director_sig_version'][0][1] or 'unversioned') if MAP['director_sig_version'] else ('unversioned' if DSIG else 'none')
-NOCALL='no tool call (not yet inherited)'
+RESIDUAL='no class (no tool call in the session)'   # provisional name: the design names none
 NEEDLES=sorted({c[len('bashtext:'):] for cl,_ in DSIG for c in cl if c.startswith('bashtext:')})
 SEGSPLIT=re.compile(r'&&|\|\||;|\||\n'); ENVASSIGN=re.compile(r'^[A-Za-z_][A-Za-z0-9_]*=\S*\s+')
 def segments(cmd):
@@ -126,7 +129,7 @@ def clause_hits(c,blocks):
     if kind=='bashtext': return any(arg in b[2] for b in blocks if b[0]=='Bash')
     return False
 def director_class(blocks):
-    if not blocks: return NOCALL
+    if not blocks: return None
     for cl,v in DSIG:
         if all(clause_hits(c,blocks) for c in cl): return v
     return 'unclassed'
@@ -230,6 +233,23 @@ for s,L in streams.items():
             prompt=prev['in']+prev['cr']+prev['cw']
             if T(e['ts'])-T(prev['ts'])>ttl and prompt>0 and e['cw']>=0.5*prompt: e['death']=True
         prev=e
+def inherit_director_classes():
+    # A request with tool blocks takes its own class (source direct). A text-only request takes the class of the next
+    # tool-bearing request of its stream (source next), else of the previous one (source previous), else the residual
+    # (source none). A stream is one transcript file in time order.
+    for L in streams.values():
+        own=[director_class(e['blocks']) for e in L]
+        nxt=None; nx=[None]*len(L)
+        for i in range(len(L)-1,-1,-1):
+            nx[i]=nxt
+            if own[i] is not None: nxt=own[i]
+        prv=None
+        for i,e in enumerate(L):
+            if own[i] is not None: e['dclass'],e['dsrc']=own[i],'direct'; prv=own[i]
+            elif nx[i] is not None: e['dclass'],e['dsrc']=nx[i],'next'
+            elif prv is not None: e['dclass'],e['dsrc']=prv,'previous'
+            else: e['dclass'],e['dsrc']=RESIDUAL,'none'
+if DSIG: inherit_director_classes()
 def act(e,role,cls):
     if e['model']=='<synthetic>': return 'synthetic'
     if e['err']: return 'api errors'
@@ -324,7 +344,7 @@ rows=collections.defaultdict(lambda:collections.Counter())
 seatrows=collections.defaultdict(lambda:collections.Counter())
 daily=collections.defaultdict(lambda:collections.Counter())
 sess=collections.defaultdict(lambda:collections.Counter()); sessmeta={}
-bymethod=collections.Counter(); dirrows=collections.defaultdict(lambda:collections.Counter())
+bymethod=collections.Counter(); dirrows=collections.defaultdict(lambda:collections.Counter()); inhrows=collections.defaultdict(lambda:collections.Counter())
 TOKEN_CLASSES=('input','cache write','cache read','output')
 tk=collections.defaultdict(lambda:collections.Counter())
 for e in msgs.values():
@@ -338,9 +358,10 @@ for e in msgs.values():
     sk=(cls if cls else base,method,team,role,a); sc=seatrows[sk]; sc['requests']+=1
     dc=daily[(e['ts'][:10],e['model'])]; dc['requests']+=1
     if cls==C_DIR and DSIG:
-        dx=dirrows[director_class(e['blocks'])]; dx['requests']+=1
-        if p: dx['usd_micro']+=usd
-        else: dx['unpriced']+=1
+        for dx in (dirrows[e['dclass']],inhrows[(e['dclass'],e['dsrc'])]):
+            dx['requests']+=1
+            if p: dx['usd_micro']+=usd
+            else: dx['unpriced']+=1
     if p:
         c['usd_micro']+=usd; sc['usd_micro']+=usd; dc['usd_micro']+=usd
         for nm,n_tok,cost in (('input',e['in'],e['in']*p['in']),('cache write',e['cw5v']+e['cw1'],e['cw5v']*p['cw5']+e['cw1']*p['cw1']),
@@ -396,6 +417,8 @@ wr('unattributed-sessions.csv',['cluster','session_hash','class','project_dir','
 wr('by-token-class.csv',['cluster','token_class','requests','list_usd'],
    [[CLUSTER,nm,tk[nm]['requests'],round(tk[nm]['usd_micro']/1e6,2)] for nm in TOKEN_CLASSES])
 if DSIG:
+    wr('by-director-inheritance.csv',['cluster','class','direction','requests','unpriced','list_usd'],
+       [[CLUSTER,k[0],k[1],c['requests'],c['unpriced'],round(c['usd_micro']/1e6,2)] for k,c in sorted(inhrows.items(),key=lambda kc:(kc[0][0],kc[0][1]))])
     wr('by-director-class.csv',['cluster','class','requests','unpriced','list_usd'],
        [[CLUSTER,k,c['requests'],c['unpriced'],round(c['usd_micro']/1e6,2)] for k,c in sorted(dirrows.items(),key=lambda kc:(-kc[1]['usd_micro'],kc[0]))])
 wr('daily-by-model.csv',['cluster','day','model','requests','list_usd','unpriced'],
