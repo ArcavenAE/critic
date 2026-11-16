@@ -1225,41 +1225,51 @@ class T(unittest.TestCase):
         self.assertEqual(run(SCRIPT, y)['unattributed-sessions.csv'][0]['class'], self.ORCH)
         self.assertEqual(run(m, y)['unattributed-sessions.csv'][0]['class'], self.DIR)
 
-    # The director split bridge: a class split into new classes keeps the totals, to the micro-dollar.
-    SPLIT_A, SPLIT_B = 'split class a', 'split class b'
+    # The director split bridge: a class split into sub-lines keeps the parent's total, to the micro-dollar.
+    SPLIT_A, SPLIT_B, SPLIT_C = 'split class a', 'split class b', 'split class c'
     SPLIT_FILE = 'director-split-bridge.csv'
-    MEMO_OUT = 'memo minus new lines'
 
     def split_run(self, script=None, split=True):
-        # director session ds: the director skill call and one unmatched Bash call stay in the parent class, two ssh calls
-        # go to split class a and three Read calls to split class b
+        # director session ds: the director skill call and one unmatched Bash call stay in the parent class (the residual),
+        # two ssh calls go to split class a and three Read calls to split class b; split class c is named in the map and
+        # never produced by this run
         recs = [rec('ds', 900, '/srv/demo-orch/x', skill='director'), rec_use('ds', 901, [('Bash', 'zzz-unmatched 1')])]
         recs += [rec_use('ds', 902 + i, [('Bash', 'ssh host-%d' % i)]) for i in range(2)]
         recs += [rec_use('ds', 910 + i, ['Read']) for i in range(3)]
         sig = self.sig_rows()
         rows = sig[:-1] + [('director_sig', 'bash:ssh', self.SPLIT_A, ''), ('director_sig', 'tool:Read', self.SPLIT_B, ''), sig[-1]]
         if split:
-            rows += [('director_split', self.SPLIT_A, self.DO, ''), ('director_split', self.SPLIT_B, self.DO, '')]
+            rows += [('director_split', c, self.DO, '') for c in (self.SPLIT_A, self.SPLIT_B, self.SPLIT_C)]
         res = run(script or SCRIPT, [('ds', None, recs)], maprows=rows)
         return {(r['line'], r['row']): (int(r['requests']), int(r['usd_micro'])) for r in (res.get(self.SPLIT_FILE) or [])}, res
 
-    def test_a_split_class_keeps_the_parent_total_to_the_micro_dollar(self):
+    def identity(self, b):
+        if not all(k in b for k in (('memo', self.DO), ('new', self.DO), ('bridge', self.DO))):
+            return None    # a missing line is not an identity that holds
+        memo, resid, bridge = b[('memo', self.DO)], b[('new', self.DO)], b[('bridge', self.DO)]
+        return tuple(memo[i] - resid[i] - bridge[i] for i in (0, 1))
+
+    def test_memo_equals_residual_plus_bridge_to_the_micro_dollar_with_two_sub_lines_and_a_residual(self):
         b, _ = self.split_run()
         R = self.REQ
         self.assertEqual(b, {('memo', self.DO): (7, 7 * R), ('new', self.DO): (2, 2 * R), ('new', self.SPLIT_A): (2, 2 * R),
-                             ('new', self.SPLIT_B): (3, 3 * R), ('bridge', self.MEMO_OUT): (0, 0)})
-        self.assertEqual(sum(v[1] for k, v in b.items() if k[0] == 'new'), b[('memo', self.DO)][1])
+                             ('new', self.SPLIT_B): (3, 3 * R), ('new', self.SPLIT_C): (0, 0), ('bridge', self.DO): (5, 5 * R)})
+        self.assertEqual(self.identity(b), (0, 0))
 
-    def test_dropping_a_split_class_from_the_bridge_breaks_the_identity(self):
+    def test_a_sub_line_the_run_never_produced_prints_a_line_with_zero_requests(self):
+        b, _ = self.split_run()
+        self.assertEqual(b.get(('new', self.SPLIT_C)), (0, 0))
+
+    def test_a_mutant_that_leaves_one_sub_line_out_of_the_bridge_sum_breaks_the_identity(self):
         good, _ = self.split_run()
-        self.assertEqual(good.get(('bridge', self.MEMO_OUT)), (0, 0))
-        m = self.mutant("for k in sorted(SPLITOF)", "for k in sorted(SPLITOF)[1:]")
+        self.assertEqual(self.identity(good), (0, 0))
+        m = self.mutant("for k in subs)", "for k in subs[1:])", 2)
         bad, _ = self.split_run(m)
-        self.assertNotEqual(bad.get(('bridge', self.MEMO_OUT)), (0, 0))
+        self.assertNotEqual(self.identity(bad), (0, 0))
 
     def test_with_no_split_rows_no_bridge_file_is_written(self):
         with_rows, _ = self.split_run()
-        self.assertIn(('bridge', self.MEMO_OUT), with_rows)
+        self.assertIn(('bridge', self.DO), with_rows)
         without, res = self.split_run(split=False)
         self.assertEqual(without, {})
         self.assertNotIn(self.SPLIT_FILE, res)
