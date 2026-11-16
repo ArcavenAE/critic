@@ -1071,16 +1071,41 @@ class T(unittest.TestCase):
                 json.dump(PRICES, fh)
             with open(os.path.join(d, 'map.csv'), 'w', newline='') as fh:
                 csv.writer(fh).writerows(MAP)
-            for bad in ('november', '2026-13', '2026-1', '202611'):
+            # the last two are full-width digits: a full-width year is the one a Unicode-aware digit class accepts
+            bads = ('november', '2026-13', '2026-1', '202611', '\uff12\uff10\uff12\uff16-11', '2026-\uff11\uff11')
+            for n, bad in enumerate(bads):
                 with self.subTest(bad):
-                    out = os.path.join(d, 'out-' + bad)
-                    r = subprocess.run([sys.executable, '-I', SCRIPT, out, os.path.join(d, 'prices.json'), 'demo',
+                    out = os.path.join(d, 'out-%d' % n)
+                    # -X utf8 so a full-width digit reaches the script as a digit in any locale, not as undecodable bytes
+                    r = subprocess.run([sys.executable, '-I', '-X', 'utf8', SCRIPT, out, os.path.join(d, 'prices.json'), 'demo',
                                         os.path.join(d, 'map.csv'), d, d, '', bad], capture_output=True, text=True,
                                        env=dict(os.environ, LEDGER_REPO_CACHE=os.path.join(d, 'cache.csv')))
                     self.assertNotEqual(r.returncode, 0)
                     self.assertIn('month', r.stderr)
                     # no output file of any kind: the out directory is absent or empty
                     self.assertEqual(os.listdir(out) if os.path.isdir(out) else [], [])
+
+    def test_the_header_names_both_tool_spellings_and_the_director_slash_command(self):
+        with open(SCRIPT) as fh:
+            head = []
+            for line in fh:
+                if not line.startswith('#'):
+                    break
+                head.append(line)
+        text = ''.join(head)
+        for want in ('mcp__director__', 'mcp__director-mcp__', '/director', 'slash command', 'MONTH'):
+            self.assertIn(want, text)
+
+    def test_an_empty_asks_argument_with_a_join_asks_unit_prints_pending(self):
+        # `MONTH` can be given without an asks file by passing '' for it; the cell is then pending, as with no argument.
+        recs = [rec('ds', 900, '/srv/demo-orch/x', skill='director'), rec_use('ds', 901, [self.SEND])]
+        res = run(SCRIPT, [('ds', None, recs)], maprows=self.sig_rows() + self.ASKUNIT, asks_path='')
+        self.assertNotIn('asks-closed.csv', res)
+        unit = {r['unit']: r for r in res['unit-costs.csv']}
+        self.assertEqual(unit['per ask closed']['unit_usd_micro'], 'pending')
+        res = run(SCRIPT, [('ds', None, recs)], maprows=self.sig_rows() + self.ASKUNIT, asks_path='', month='2026-10')
+        unit = {r['unit']: r for r in res['unit-costs.csv']}
+        self.assertEqual(unit['per ask closed']['unit_usd_micro'], 'pending')
 
     def test_waits_under_either_director_tool_spelling_are_hub_wait(self):
         waits = ['mcp__director__wait_for_message', 'mcp__director-mcp__wait_for_message',
