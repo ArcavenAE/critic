@@ -1274,6 +1274,39 @@ class T(unittest.TestCase):
         self.assertEqual(without, {})
         self.assertNotIn(self.SPLIT_FILE, res)
 
+    # The split guard: a director_split row that cannot hold is named on stderr at load time, and the run goes on unchanged.
+    def split_rows_run(self, split_rows):
+        recs = [rec('ds', 900, '/srv/demo-orch/x', skill='director'), rec_use('ds', 901, [('Bash', 'ssh host-1')])]
+        sig = self.sig_rows()
+        rows = sig[:-1] + [('director_sig', 'bash:ssh', self.SPLIT_A, ''), sig[-1]] + list(split_rows)
+        return run(SCRIPT, [('ds', None, recs)], maprows=rows)
+
+    def test_a_split_row_whose_parent_is_no_known_class_prints_one_stderr_line_and_the_run_goes_on(self):
+        good = self.split_rows_run([('director_split', self.SPLIT_A, self.DO, '')])
+        self.assertEqual(good['_stderr'], '')
+        typo = 'director othr'
+        bad = self.split_rows_run([('director_split', self.SPLIT_A, typo, '')])
+        lines = [l for l in bad['_stderr'].splitlines() if l.strip()]
+        self.assertEqual(len(lines), 1)
+        self.assertIn(self.SPLIT_A, lines[0])
+        self.assertIn(typo, lines[0])
+        # the output is as it was: the bridge is still written, under the parent the map names
+        self.assertEqual({r['parent'] for r in bad[self.SPLIT_FILE]}, {typo})
+        # the session-level residual is no director class, so a split row naming it as parent is named as well
+        res = self.split_rows_run([('director_split', self.SPLIT_A, self.RESIDUAL, '')])
+        lines = [l for l in res['_stderr'].splitlines() if l.strip()]
+        self.assertEqual(len(lines), 1)
+        self.assertIn(self.RESIDUAL, lines[0])
+
+    def test_a_sub_line_named_in_two_split_rows_prints_one_stderr_line_and_the_last_row_wins(self):
+        both = self.split_rows_run([('director_split', self.SPLIT_A, self.FC, ''), ('director_split', self.SPLIT_A, self.DO, '')])
+        lines = [l for l in both['_stderr'].splitlines() if l.strip()]
+        self.assertEqual(len(lines), 1)
+        self.assertIn(self.SPLIT_A, lines[0])
+        last = self.split_rows_run([('director_split', self.SPLIT_A, self.DO, '')])
+        self.assertEqual(last['_stderr'], '')
+        self.assertEqual(both[self.SPLIT_FILE], last[self.SPLIT_FILE])
+
 
 if __name__ == '__main__':
     unittest.main()
