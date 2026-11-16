@@ -1047,22 +1047,35 @@ class T(unittest.TestCase):
             if k != '_source':
                 self.assertEqual(s12[k], v)
         want = {'claude-opus-5': (5.0, 25.0, 0.5, 6.25, 10.0), 'claude-sonnet-5': (2.0, 10.0, 0.2, 2.5, 4.0),
-                'claude-haiku-4-5': (1.0, 5.0, 0.1, 1.25, 2.0), 'claude-fable-5-1': (10.0, 50.0, 0.25, 12.5, 20.0),
-                # added 2026-11-16 from the published pricing page; Mythos 5.1 is listed at the Fable 5.1 rates
-                'claude-fable-5-2': (8.0, 40.0, 0.2, 10.0, 16.0), 'claude-mythos-5-1': (10.0, 50.0, 0.25, 12.5, 20.0)}
+                'claude-haiku-4-5': (1.0, 5.0, 0.1, 1.25, 2.0), 'claude-fable-5-1': (10.0, 50.0, 0.25, 12.5, 20.0)}
         for k, (i, o, cr, w5, w1) in want.items():
-            self.assertIn(k, s12)
             self.assertEqual((s12[k]['in'], s12[k]['out'], s12[k]['cr'], s12[k]['cw5'], s12[k]['cw1']), (i, o, cr, w5, w1))
         self.assertEqual(sorted(set(s12) - set(s11)), sorted(want))
         self.assertIn('cached list rates', s12['_source'])
-        # a figure with no named public source is not allowed: the header names the page and the date it was read
-        self.assertIn('https://platform.claude.com/docs/en/about-claude/pricing', s12['_source'])
-        self.assertIn('2026-11-16', s12['_source'])
-        for k in ('claude-fable-5-2', 'claude-mythos-5-1'):
-            self.assertIn(k, s12['_source'])
+
+    def test_prices_s13_is_s12_plus_fable_5_2_and_mythos_5_1_from_a_named_public_source(self):
+        with open(os.path.join(HERE, 'prices-s12.json')) as fh:
+            s12 = json.load(fh)
+        self.assertTrue(os.path.exists(os.path.join(HERE, 'prices-s13.json')), 'prices-s13.json is missing')
+        with open(os.path.join(HERE, 'prices-s13.json')) as fh:
+            s13 = json.load(fh)
+        for k, v in s12.items():
+            if k != '_source':
+                self.assertEqual(s13.get(k), v)
+        want = {'claude-fable-5-2': (8.0, 40.0, 0.2, 10.0, 16.0), 'claude-mythos-5-1': (10.0, 50.0, 0.25, 12.5, 20.0)}
+        self.assertEqual(sorted(set(s13) - set(s12)), sorted(want))
+        for k, (i, o, cr, w5, w1) in want.items():
+            self.assertEqual((s13[k]['in'], s13[k]['out'], s13[k]['cr'], s13[k]['cw5'], s13[k]['cw1']), (i, o, cr, w5, w1))
+        # a figure with no named public source is not allowed: the header's added sentence names the page and the date read
+        src = s13['_source']
+        self.assertIn(s12['_source'], src)
+        self.assertIn('Added 2026-11-16, read from the published pricing table at https://platform.claude.com/docs/en/about-claude/pricing on 2026-11-16', src)
+        for k in want:
+            self.assertIn(k, src)
 
     def test_a_run_with_fable_5_2_and_mythos_5_1_reports_both_as_priced(self):
-        with open(os.path.join(HERE, 'prices-s12.json')) as fh:
+        self.assertTrue(os.path.exists(os.path.join(HERE, 'prices-s13.json')), 'prices-s13.json is missing')
+        with open(os.path.join(HERE, 'prices-s13.json')) as fh:
             prices = json.load(fh)
         recs = []
         for n, model in enumerate(('claude-fable-5-2', 'claude-mythos-5-1')):
