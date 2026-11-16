@@ -66,7 +66,7 @@ def rec_use(sid, n, uses, cwd='/srv/demo-orch/x', ts='2026-10-05T10:00:00Z'):
                       'cache_creation_input_tokens': 0}}}
 
 
-def run(script, sessions, launch_lines=(), gz_lines=(), prices=None, mkout=True, cache=None, maprows=(), counts=None):
+def run(script, sessions, launch_lines=(), gz_lines=(), prices=None, mkout=True, cache=None, maprows=(), counts=None, asks=None):
     """sessions: list of (sid, agent_name or None, [records]). Returns {file: rows} from the output dir."""
     with tempfile.TemporaryDirectory() as d:
         proj = os.path.join(d, 'cfg', 'projects', 'p'); os.makedirs(proj)
@@ -97,8 +97,13 @@ def run(script, sessions, launch_lines=(), gz_lines=(), prices=None, mkout=True,
             with open(os.path.join(d, 'counts.csv'), 'w', newline='') as fh:
                 csv.writer(fh).writerows([('unit', 'count')] + list(counts))
             env['LEDGER_UNIT_COUNTS'] = os.path.join(d, 'counts.csv')
+        argv = [os.path.join(d, 'cfg', 'projects'), logd]
+        if asks is not None:
+            with open(os.path.join(d, 'asks.jsonl'), 'w') as fh:
+                fh.write('\n'.join(a if isinstance(a, str) else json.dumps(a) for a in asks) + '\n')
+            argv.append(os.path.join(d, 'asks.jsonl'))
         r = subprocess.run([sys.executable, '-I', script, out, os.path.join(d, 'prices.json'), 'demo',
-                            os.path.join(d, 'map.csv'), os.path.join(d, 'cfg', 'projects'), logd],
+                            os.path.join(d, 'map.csv')] + argv,
                            capture_output=True, text=True, env=env)
         assert r.returncode == 0, r.stderr
         res = {'_cr': [], '_stderr': r.stderr}
@@ -525,7 +530,52 @@ class T(unittest.TestCase):
                           'per ask closed': 'pending', 'per stall cleared': 'n/a'})
         self.assertTrue(t and '0' not in [r['unit_usd_micro'] for r in t.values()])
 
-    def test_unit_cost_mutants_turn_red(self):
+    ASKUNIT = [('unit_cost', 'per ask closed', 'join:asks', 'asks.jsonl, intake rows joined to close rows by ask_id')]
+
+    def asks_rows(self):
+        # synthetic rows in the asks.jsonl shapes; the text and reason fields must never reach an output
+        i = lambda n, day: {'ask_id': 'I-%d' % n, 'received_at': '2026-10-%02dT10:00:00Z' % day, 'source': 'operator',
+                            'text': 'SECRETTEXT%d' % n}
+        c = lambda n, day, how, **kw: dict({'event': 'close', 'ask_id': 'I-%d' % n, 'closed_at': day, 'as': how, 'ref': 'where'}, **kw)
+        return [i(1, 3), i(2, 4), i(3, 5), i(4, 6), i(5, 7),
+                c(1, '2026-10-04T10:00:00Z', 'answered'), c(2, '2026-10-05T10:00:00Z', 'carded'),
+                c(3, '2026-10-06T10:00:00Z', 'not-an-ask', reason='SECRETREASON'),
+                c(1, '2026-10-09T10:00:00Z', 'answered'),          # a second close of the same ask counts once
+                c(5, '2026-11-01T10:00:00Z', 'answered'),          # closed after the audit window
+                c(9, '2026-10-08T10:00:00Z', 'answered'),          # a close with no intake row
+                'not json at all', '{"event": "close"}']
+
+    def ask_run(self, asks, units=None):
+        recs = [rec('ds', 900, '/srv/demo-orch/x', skill='director')]
+        uses = [[self.SEND]] * 3 + [[('Bash', 'merge-guard 1')]] * 2 + [[('Bash', 'card-ingest a')]]
+        recs += [rec_use('ds', 901 + i, u) for i, u in enumerate(uses)]
+        res = run(SCRIPT, [('ds', None, recs)], maprows=self.sig_rows() + (self.ASKUNIT if units is None else units), asks=asks)
+        closed = {r['as']: int(r['closed']) for r in (res.get('asks-closed.csv') or [])}
+        unit = {r['unit']: r for r in (res.get('unit-costs.csv') or [])}
+        return res, closed, unit
+
+    def test_the_asks_join_yields_the_closed_count_and_the_per_ask_cost(self):
+        res, closed, unit = self.ask_run(self.asks_rows())
+        self.assertEqual(closed, {'all': 3, 'answered': 1, 'carded': 1, 'not-an-ask': 1})
+        u = unit.get('per ask closed', {})
+        self.assertEqual((u.get('class'), u.get('denominator'), u.get('unit_usd_micro')), ('all director classes', '3', str(round(7 * self.REQ / 3))))
+        text = json.dumps(res)
+        for word in ('SECRETTEXT', 'SECRETREASON'):
+            self.assertNotIn(word, text)
+
+    def test_without_the_asks_file_the_cell_prints_pending(self):
+        res, closed, unit = self.ask_run(None)
+        self.assertEqual(closed, {})
+        self.assertNotIn('asks-closed.csv', res)
+        self.assertEqual(unit.get('per ask closed', {}).get('unit_usd_micro'), 'pending')
+
+    def test_an_asks_file_with_no_closes_prints_n_a_with_its_source_not_zero(self):
+        res, closed, unit = self.ask_run([r for r in self.asks_rows() if isinstance(r, dict) and r.get('event') != 'close'])
+        self.assertEqual(closed, {'all': 0})
+        u = unit.get('per ask closed', {})
+        self.assertEqual((u.get('unit_usd_micro'), u.get('source')), ('n/a', 'asks.jsonl, intake rows joined to close rows by ask_id'))
+
+
         counts = [('per relay', '2'), ('per operator decision', '0'), ('per stall cleared', '9')]   # per merge is absent
         good = self.unit_run(counts)
         for a, b in (("round(usd/cnt) if cnt else 'n/a'", "round(usd/cnt) if cnt else 0"),
