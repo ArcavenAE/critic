@@ -1128,6 +1128,44 @@ class T(unittest.TestCase):
         # a user turn is not a request: six assistant records, six requests
         self.assertEqual(sum(int(r['requests']) for r in res['by-seat-label.csv']), 6)
 
+    def test_i461_mutants_turn_red(self):
+        h = lambda x: hashlib.sha256(x.encode()).hexdigest()[:12]
+        # the month argument: a script that ignores it still reads October
+        s = [('n1', None, [rec('n1', 840, '/srv/demo-orch/x', ts='2026-11-05T10:00:00Z')])]
+        m = self.mutant("WINDOW=MONTH   #", "WINDOW='2026-10'   #")
+        self.assertEqual({r['session_hash'] for r in run(SCRIPT, s, month='2026-11')['unattributed-sessions.csv']}, {h('n1')})
+        self.assertEqual(run(m, s, month='2026-11')['unattributed-sessions.csv'], [])
+        # the second tool spelling: a script that knows only mcp__director__ takes a director-mcp wait for work
+        w = [('w1', 'acme-builder-g1-0', [rec('w1', 841, tools=['mcp__director-mcp__wait_for_message'])])]
+        m = self.mutant("DIRPREFIX=('mcp__director__','mcp__director-mcp__')", "DIRPREFIX=('mcp__director__',)")
+        self.assertEqual(run(SCRIPT, w)['by-seat-label.csv'][0]['activity'], self.HUB)
+        self.assertNotEqual(run(m, w)['by-seat-label.csv'][0]['activity'], self.HUB)
+        # the slash command: a script that never reads user turns leaves the session in orchestration
+        u = {'type': 'user', 'timestamp': '2026-10-05T10:00:00Z', 'sessionId': 'c1', 'cwd': '/srv/demo-orch/x', 'uuid': 'uc1',
+             'message': {'role': 'user', 'content': '<command-name>/director</command-name>'}}
+        c = [('c1', None, [u, rec('c1', 842, '/srv/demo-orch/x')])]
+        m = self.mutant("if (r.get('timestamp') or '').startswith(WINDOW) and r.get('sessionId') and SLASHDIR.search(text):",
+                        "if False:")
+        self.assertEqual(run(SCRIPT, c)['unattributed-sessions.csv'][0]['class'], self.DIR)
+        self.assertEqual(run(m, c)['unattributed-sessions.csv'][0]['class'], self.ORCH)
+        # a user turn outside the month does not count
+        m = self.mutant("if (r.get('timestamp') or '').startswith(WINDOW) and r.get('sessionId') and SLASHDIR.search(text):",
+                        "if r.get('sessionId') and SLASHDIR.search(text):")
+        old = dict(u, timestamp='2026-09-05T10:00:00Z')
+        c = [('c1', None, [old, rec('c1', 842, '/srv/demo-orch/x')])]
+        self.assertEqual(run(SCRIPT, c)['unattributed-sessions.csv'][0]['class'], self.ORCH)
+        self.assertEqual(run(m, c)['unattributed-sessions.csv'][0]['class'], self.DIR)
+        # only the two named wait tools wait: a script that takes every director tool for a wait turns a send into hub wait
+        x = [('x1', 'acme-filer-g1-0', [rec('x1', 843, tools=['mcp__director-mcp__send_message'])])]
+        m = self.mutant("if e['tools'] and e['tools']<=WAIT:", "if e['tools'] and all(t.startswith(DIRPREFIX) for t in e['tools']):")
+        self.assertEqual(run(SCRIPT, x)['by-seat-label.csv'][0]['activity'], 'filing')
+        self.assertEqual(run(m, x)['by-seat-label.csv'][0]['activity'], self.HUB)
+        # exactly half of the calls under the second spelling is not a majority: >= for > makes it a director session
+        y = [('y1', None, [rec('y1', 844, '/srv/demo-orch/x', tools=['mcp__director-mcp__send_message', 'Bash'])])]
+        m = self.mutant("2*tc['director']>tc['n']", "2*tc['director']>=tc['n']")
+        self.assertEqual(run(SCRIPT, y)['unattributed-sessions.csv'][0]['class'], self.ORCH)
+        self.assertEqual(run(m, y)['unattributed-sessions.csv'][0]['class'], self.DIR)
+
 
 if __name__ == '__main__':
     unittest.main()
