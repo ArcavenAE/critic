@@ -1,6 +1,6 @@
 id: elem-run-record-model
 type: element
-confidence: frontier
+confidence: bedrock
 title: "critic's run record: one record per measured or indexed execution, of which a legion repository is one locus"
 tags:
   - registry
@@ -76,6 +76,15 @@ content: |
   because the record is built and its first consumer's shape matches; moving
   it is a human act, so it stays frontier here. Not re-read: the full field
   list against the design table.
+
+  Moved to bedrock 2026-11-18 (I-532 harvest; operator ruling d1117b-1,
+  option 1, 2026-11-17), the move proposed in the paragraph above. The ruling is the human act that paragraph waits for.
+  Evidence at critic main f5af403: docs/design/critic-mvp.md section 9 reads
+  "All four are ruled" (R2 and R3 on 2026-10-15, R1 and R4 on 2026-10-30), and
+  crates/critic-core/src/model.rs carries the record. The sentences above that
+  say "Not ratified" and "it stays frontier here" record the state at
+  2026-11-01 and are left as written. Not re-read: the field list beyond `kind`
+  against the design table, and the 2026-11-15 re-check that passed.
 
 edges:
   - target: elem-arena-evidence-policy
