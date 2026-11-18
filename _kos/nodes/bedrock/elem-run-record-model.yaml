@@ -84,7 +84,7 @@ content: |
   crates/critic-core/src/model.rs carries the record. The sentences above that
   say "Not ratified" and "it stays frontier here" record the state at
   2026-11-01 and are left as written. Not re-read: the field list beyond `kind`
-  against the design table, and the 2026-11-15 re-check that passed.
+  against the design table, and the 2026-11-15 re-check date, now past.
 
 edges:
   - target: elem-arena-evidence-policy
