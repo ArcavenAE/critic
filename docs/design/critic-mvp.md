@@ -2,7 +2,7 @@
 
 **Status:** R1 to R4 ruled (section 9). Nothing here is built.
 **Ticket:** aae-orc-hp96 (build critic MVP).
-**Graph:** seeds `_kos/nodes/frontier/elem-run-record-model.yaml` and `_kos/nodes/frontier/elem-run-lineage.yaml`.
+**Graph:** seeds `_kos/nodes/bedrock/elem-run-record-model.yaml` and `_kos/nodes/frontier/elem-run-lineage.yaml`.
 
 ## 1. Why
 
