@@ -30,6 +30,14 @@ def run(prs):
         return json.loads(r.stdout)
 
 
+def at(d, *keys):
+    """Walk keys, failing with an assertion that names the missing key (not a KeyError)."""
+    for k in keys:
+        assert isinstance(d, dict) and k in d, 'missing key %r in %s' % (k, sorted(d) if isinstance(d, dict) else d)
+        d = d[k]
+    return d
+
+
 def by_number(out, n):
     return [x for x in out['prs'] if x['number'] == n][0]
 
@@ -126,7 +134,7 @@ class Summary(unittest.TestCase):
         return [p(1, 0), p(2, 0), p(3, 1), p(4, 2), p(5, 3), p(6, 9, merged=False)]
 
     def test_median_p25_p75_and_n_over_merged_prs(self):
-        s = run(self.prs())['summary']['throughput']['instability']['rounds']
+        s = at(run(self.prs()), 'summary', 'throughput', 'instability', 'rounds')
         self.assertEqual((s['median'], s['p25'], s['p75'], s['n']), (1, 0, 2, 5))
 
     def test_no_mean_is_reported(self):
@@ -138,21 +146,21 @@ class Summary(unittest.TestCase):
 
     def test_unmerged_prs_stay_out_of_the_distribution(self):
         out = run(self.prs())
-        self.assertEqual(out['summary']['throughput']['instability']['rounds']['n'], 5)
+        self.assertEqual(at(out, 'summary', 'throughput', 'instability', 'rounds', 'n'), 5)
         self.assertEqual(by_number(out, 6)['rounds'], 9)
 
     def test_throughput_sits_in_one_object_with_its_instability_measure(self):
-        pair = run(self.prs())['summary']['throughput']
+        pair = at(run(self.prs()), 'summary', 'throughput')
         self.assertEqual(pair['merged'], 5)
-        self.assertEqual(pair['instability']['rounds']['median'], 1)
-        self.assertEqual(pair['instability']['merged_after_revision'], 3)
-        self.assertEqual(pair['instability']['share_after_revision'], 0.6)
-        self.assertEqual(pair['instability']['merged_as_is'], 2)
+        self.assertEqual(at(pair, 'instability', 'rounds', 'median'), 1)
+        self.assertEqual(at(pair, 'instability', 'merged_after_revision'), 3)
+        self.assertEqual(at(pair, 'instability', 'share_after_revision'), 0.6)
+        self.assertEqual(at(pair, 'instability', 'merged_as_is'), 2)
 
     def test_every_repo_group_carries_the_same_pairing(self):
-        by = run(self.prs())['by_repo']['demo/alpha']
-        self.assertEqual(by['throughput']['merged'], 5)
-        self.assertIn('rounds', by['throughput']['instability'])
+        by = at(run(self.prs()), 'by_repo', 'demo/alpha')
+        self.assertEqual(at(by, 'throughput', 'merged'), 5)
+        self.assertIn('rounds', at(by, 'throughput', 'instability'))
 
     def test_no_bare_throughput_count_outside_the_pairing(self):
         s = run(self.prs())['summary']
@@ -164,18 +172,18 @@ class Summary(unittest.TestCase):
         prs = self.prs() + [pr(7, [], ['2026-11-01T08:00:00Z'], merged=False, state='OPEN')]
         s = run(prs)['summary']
         self.assertEqual(s['closed_unmerged'], 1)
-        self.assertEqual(s['open'], 1)
+        self.assertEqual(at(s, 'open'), 1)
 
     def test_a_non_merged_pr_with_no_state_is_reported_as_unknown_not_closed(self):
         p = pr(8, [], [], merged=False)
         del p['state']
         s = run(self.prs()[:1] + [p])['summary']
         self.assertEqual(s['closed_unmerged'], 0)
-        self.assertEqual(s['state_unknown'], 1)
+        self.assertEqual(at(s, 'state_unknown'), 1)
 
     def test_share_merged_with_zero_rounds_is_reported(self):
-        i = run(self.prs())['summary']['throughput']['instability']
-        self.assertEqual(i['share_as_is'], 0.4)
+        i = at(run(self.prs()), 'summary', 'throughput', 'instability')
+        self.assertEqual(at(i, 'share_as_is'), 0.4)
 
     def test_groups_by_repo_and_never_names_an_author(self):
         prs = self.prs()
@@ -185,11 +193,11 @@ class Summary(unittest.TestCase):
         self.assertNotIn('someone-seat-g1-0', json.dumps(out))
 
     def test_empty_input_reports_n_zero_and_no_figures(self):
-        s = run([])['summary']['throughput']
-        self.assertEqual(s['instability']['rounds']['n'], 0)
-        self.assertIsNone(s['instability']['rounds']['median'])
-        self.assertIsNone(s['instability']['share_after_revision'])
-        self.assertEqual(s['merged'], 0)
+        s = at(run([]), 'summary', 'throughput')
+        self.assertEqual(at(s, 'instability', 'rounds', 'n'), 0)
+        self.assertIsNone(at(s, 'instability', 'rounds', 'median'))
+        self.assertIsNone(at(s, 'instability', 'share_after_revision'))
+        self.assertEqual(at(s, 'merged'), 0)
 
 
 if __name__ == '__main__':
