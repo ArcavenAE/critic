@@ -103,7 +103,7 @@ Sources are those of the agent-team metrics survey behind this plan. Where two s
 ## human revision cost
 
 - **Definition:** the number of revision rounds an output needs before it merges, and the split between merged as is and merged after revision. The idea adapts MetaGPT's human revision cost (Hong et al., 2024, https://proceedings.iclr.cc/paper_files/paper/2024/hash/6507b115562bb0a305f1958ccc87355a-Abstract-Conference.html).
-- **Start and end events:** start is the first review of the pull request; each review that is in the `CHANGES_REQUESTED` state, or is a comment review whose body carries a not-yet verdict, followed by new commits, is one round; end is the merge. Both count: on the repos where the forge state is used it is the larger signal, and where reviews are posted as comments the verdict is in the body.
+- **Start and end events:** start is the first review of the pull request; each review that is in the `CHANGES_REQUESTED` state, or is a comment review whose body carries a not-yet verdict, followed by new commits, is one round; end is the merge. Both count: on the repos where the forge state is used it is the larger signal, and where reviews are posted as comments the verdict is in the body. Consecutive revision reviews answered by the same commits are one round; a base merge does not answer a review.
 - **Unit:** rounds per pull request.
 - **Fleet source:** GitHub reviews and commits.
 - **Statistic:** median with p25, p75 and n, and the share merged with zero rounds.
