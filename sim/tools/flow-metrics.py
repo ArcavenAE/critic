@@ -32,7 +32,8 @@
 # Change fail rate and rework rate are computed by fix-rates.py, not here, so they print pending.
 # Grouping: rows are by source (asks, PRs) because no ask or PR carries a role and team key yet; the glossary unit is per role
 # and team, and every row's note says so.
-# A PR closed unmerged is keyed by its number, so it never hides an open PR created in the same second.
+# A PR closed unmerged counts as open from createdAt to closedAt, so it is in WIP and work item age until it closes, and it
+# is never throughput or cycle time. PRs are keyed by number, so two PRs created in the same second stay distinct.
 # gh pr list stops at --limit rows. When the export holds exactly 1000 rows, the script warns on stderr and every PR row's note
 # says older PRs may be missing.
 import csv, json, os, re, sys
@@ -76,13 +77,15 @@ for line in lines:
     elif ts(r.get('received_at')): start.setdefault(r['ask_id'], ts(r.get('received_at')))
 asks = [(a, start[a], end.get(a)) for a in start]
 LIMIT = 1000
-pulls, closed_unmerged = [], set()
+pulls, pulls_open = [], []
 for p in prs:
     if not isinstance(p, dict) or ts(p.get('createdAt')) is None: continue
     n = str(p.get('number'))
     pulls.append((n, ts(p.get('createdAt')), ts(p.get('mergedAt'))))
-    # a PR closed unmerged has no merged time and would read as open forever; it is keyed by number, never by time
-    if p.get('state') == 'CLOSED' and not p.get('mergedAt'): closed_unmerged.add(n)
+    # a PR closed unmerged is open from createdAt to closedAt (it was work in progress until then) and is never throughput;
+    # its end for the open-at-an-instant measures is closedAt, and an export that omits closedAt leaves it open
+    unmerged = p.get('state') == 'CLOSED' and not p.get('mergedAt')
+    pulls_open.append((n, ts(p.get('createdAt')), ts(p.get('closedAt')) if unmerged else ts(p.get('mergedAt'))))
 TRUNC = len(prs) == LIMIT
 if TRUNC: print('flow-metrics: the pull request export holds exactly %d rows, the gh --limit; older PRs may be missing' % LIMIT, file=sys.stderr)
 
@@ -122,9 +125,9 @@ for src, done, s_ev, e_ev, unit in (('asks', done_a, ASK_S, ASK_E, 'asks closed'
 for src, done, s_ev, e_ev in (('asks', done_a, ASK_S, ASK_E), ('prs', done_p, PR_S, PR_E)):
     add('cycle time', src, s_ev, e_ev, 'hours', len(done), spread([hours(s, e) for _, s, e in done]), inst=INST_C)
 def open_at(items, t):
-    return [(a, s) for a, s, e in items if s <= t and (e is None or e > t) and a not in closed_unmerged]
+    return [(a, s) for a, s, e in items if s <= t and (e is None or e > t)]
 age_rows = []
-for src, items, s_ev in (('asks', asks, ASK_S), ('prs', pulls, PR_S)):
+for src, items, s_ev in (('asks', asks, ASK_S), ('prs', pulls_open, PR_S)):
     op = sorted(open_at(items, ASOF), key=lambda x: x[1])
     ages = [hours(s, ASOF) for _, s in op]
     age_rows += [[src, a, s.strftime('%Y-%m-%dT%H:%M:%SZ'), fmt(hours(s, ASOF))] for a, s in op]
