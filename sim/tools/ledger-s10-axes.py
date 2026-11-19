@@ -104,6 +104,11 @@
 # by-token-class.csv splits this host's list price by token class (input, cache write, cache read, output): requests is the
 # count of priced requests that carry tokens of that class, list_usd the tokens times the price the script already applies
 # (cache write is the 5 minute and the 1 hour tokens together). A request whose model has no price is in neither column.
+# per-item-stats.csv reports every per-item figure as n, median, p25 and p75, and never a mean: tokens per request (input, cache
+# write, cache read, output, and the four together), list cost per request, requests per session and list cost per session. The
+# statistic is the one the glossary names for each term (critic docs/analysis/glossary.md). Percentiles use linear interpolation
+# between order statistics (the position is p*(n-1) over the sorted values). A figure with n of 0 prints n/a in its three
+# statistic cells, never 0. Cost figures count priced requests only; token figures count every request that is not synthetic.
 import json,glob,os,re,collections,csv,sys,gzip,hashlib
 try: import fcntl
 except ImportError: fcntl=None
@@ -433,12 +438,17 @@ famrows=collections.defaultdict(lambda:collections.Counter())
 dirrows=collections.defaultdict(lambda:collections.Counter()); inhrows=collections.defaultdict(lambda:collections.Counter())
 TOKEN_CLASSES=('input','cache write','cache read','output')
 tk=collections.defaultdict(lambda:collections.Counter())
+reqtok=collections.defaultdict(list); requsd=[]; sessreq=collections.Counter(); sessusd=collections.Counter()
 for e in msgs.values():
     if e['model']=='<synthetic>': continue
     lab,team,role,method,base=seat(e['sid'])
     cls=uclass(e['sid'])[0] if role=='-' else None
     a=act(e,role,cls); a_old=act(e,role,cls,False); p=price(e['model']); repo=repo_of(e['cwd']); goal=goal_of(a,repo,team)
     usd=round((e['in']*p['in']+e['cw5v']*p['cw5']+e['cw1']*p['cw1']+e['cr']*p['cr']+e['out']*p['out'])) if p else 0
+    tcl=(e['in'],e['cw5v']+e['cw1'],e['cr'],e['out'])
+    for nm,v in zip(TOKEN_CLASSES,tcl): reqtok[nm].append(v)
+    reqtok['total'].append(sum(tcl)); sessreq[e['sid']]+=1
+    if p: requsd.append(usd); sessusd[e['sid']]+=usd
     k=(e['ts'][:10],repo,goal,a,team,role)
     c=rows[k]; c['requests']+=1; bymethod[method]+=1
     sk=(cls if cls else base,method,team,role,a); sc=seatrows[sk]; sc['requests']+=1
@@ -535,6 +545,18 @@ if UNITS:
     wr('unit-costs.csv',['cluster','unit','class','class_usd_micro','denominator','source','unit_usd_micro'],rowsu)
 if isinstance(ASKS_CLOSED,collections.Counter):
     wr('asks-closed.csv',['cluster','as','closed'],[[CLUSTER,'all',sum(ASKS_CLOSED.values())]]+[[CLUSTER,k,ASKS_CLOSED[k]] for k in sorted(ASKS_CLOSED)])
+def pct(v,q):
+    # linear interpolation between order statistics; v is sorted and not empty
+    x=q*(len(v)-1); lo=int(x); hi=min(lo+1,len(v)-1); return v[lo]+(v[hi]-v[lo])*(x-lo)
+def fmt(x): return str(int(x)) if x==int(x) else str(round(x,2))
+def stat_row(item,unit,vals):
+    v=sorted(vals)
+    if not v: return [CLUSTER,item,unit,0,'n/a','n/a','n/a']
+    return [CLUSTER,item,unit,len(v),fmt(pct(v,.5)),fmt(pct(v,.25)),fmt(pct(v,.75))]
+wr('per-item-stats.csv',['cluster','item','unit','n','median','p25','p75'],
+   [stat_row('tokens per request: '+nm,'tokens',reqtok[nm]) for nm in TOKEN_CLASSES+('total',)]
+   +[stat_row('list cost per request','usd_micro',requsd),stat_row('requests per session','requests',list(sessreq.values())),
+     stat_row('list cost per session','usd_micro',list(sessusd.values()))])
 wr('by-token-class.csv',['cluster','token_class','requests','list_usd'],
    [[CLUSTER,nm,tk[nm]['requests'],round(tk[nm]['usd_micro']/1e6,2)] for nm in TOKEN_CLASSES])
 if DSIG:
