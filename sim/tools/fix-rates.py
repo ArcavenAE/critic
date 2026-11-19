@@ -5,7 +5,9 @@
 #   fixes name it. A fix merged before its target does not fail it.
 # Rework rate: the share of changes merged in a period that are unplanned fixes: a merged PR that carries a Fixes-PR
 #   trailer, or a line that starts "Closes: <bd id>" naming a bd ticket of type bug. A "Refs:" line is not rework.
-# Period: the calendar month (YYYY-MM) of the merge. A fix counts against the period of the change it fixes.
+# Unit: grouped by repo, because no PR field carries a role and team yet; the glossary unit is per role and team, so the
+#   output says so (grouped_by_note) and the grouping moves to that key when one exists.
+# Period: the calendar month (YYYY-MM) of the merge, or the ISO week with the week argument. A fix counts against the period of the change it fixes.
 # Throughput (merged PRs in the period) prints beside both rates; a rate is never read alone. Counts and rates only,
 # no mean, no author, no seat. A diagnostic, never a gate (ADR-007). Trailers are a signal; a fix with no trailer
 # is invisible here, so a low rate is a floor on the failures, not proof of none.
@@ -17,8 +19,8 @@
 #     | while read n; do gh pr view "$n" --repo OWNER/REPO --json number,mergedAt,body,commits; done \
 #     | jq -s --arg repo OWNER/REPO '[.[] | {repo: $repo, number, mergedAt, text: (.body + "\n" + ([.commits[].messageBody] | join("\n")))}]'
 #   and the bug ids from bd (issue_type = bug), as {id, issue_type} rows.
-# Usage: python3 -I fix-rates.py IN_JSON
-import json, re, sys
+# Usage: python3 -I fix-rates.py IN_JSON [month|week]   (default month; week is the ISO week, YYYY-Www)
+import datetime, json, re, sys
 
 FIXES = re.compile(r'^[ \t]*Fixes-PR:[ \t]*([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(\d+)[ \t]*$', re.MULTILINE)
 CLOSES = re.compile(r'^[ \t]*Closes:[ \t]*(.+)$', re.MULTILINE)
@@ -43,35 +45,56 @@ def rate(num, den):
     return {'numerator': num, 'denominator': den, 'rate': (num / den) if den else None}
 
 
-def main(path):
+def period_of(merged_at, kind):
+    if kind == 'month':
+        return merged_at[:7]
+    y, w, _ = datetime.date.fromisoformat(merged_at[:10]).isocalendar()
+    return '%04d-W%02d' % (y, w)
+
+
+def main(path, kind='month'):
+    if kind not in ('month', 'week'):
+        sys.exit('fix-rates.py: period must be month or week, not %r' % kind)
     with open(path) as f:
         d = json.load(f)
     bug_ids = {i['id'] for i in d.get('bd_issues') or [] if i.get('issue_type') == 'bug'}
     merged = [p for p in d['prs'] if p.get('mergedAt')]
     by_key = {key(p['repo'], p['number']): p for p in merged}
     failed, unresolved = set(), 0
-    rework = set()
+    rework, trailers, bug_closes = set(), {}, {}
     for p in merged:
+        k = key(p['repo'], p['number'])
         targets = fix_targets(p.get('text'))
-        if targets or any(i in bug_ids for i in closed_bd_ids(p.get('text'))):
-            rework.add(key(p['repo'], p['number']))
+        closes_bug = any(i in bug_ids for i in closed_bd_ids(p.get('text')))
+        trailers[k] = len(targets)
+        bug_closes[k] = 1 if closes_bug else 0
+        if targets or closes_bug:
+            rework.add(k)
         for t in targets:
             target = by_key.get(t)
             if target is None:
                 unresolved += 1
             elif target['mergedAt'] < p['mergedAt']:
                 failed.add(t)
-    periods = {}
+    groups = {}
     for p in merged:
-        periods.setdefault(p['mergedAt'][:7], []).append(key(p['repo'], p['number']))
-    out = {}
-    for period in sorted(periods):
-        ks = periods[period]
-        out[period] = {'throughput': len(ks),
-                       'change_fail': rate(len([k for k in ks if k in failed]), len(ks)),
-                       'rework': rate(len([k for k in ks if k in rework]), len(ks))}
-    print(json.dumps({'by_period': out, 'unresolved_links': unresolved}, indent=2, sort_keys=True))
+        groups.setdefault(p['repo'], {}).setdefault(period_of(p['mergedAt'], kind), []).append(key(p['repo'], p['number']))
+    by_repo = {}
+    for repo in sorted(groups):
+        by_repo[repo] = {'by_period': {}}
+        for period in sorted(groups[repo]):
+            ks = groups[repo][period]
+            by_repo[repo]['by_period'][period] = {
+                'throughput': len(ks),
+                'change_fail': rate(len([k for k in ks if k in failed]), len(ks)),
+                'rework': rate(len([k for k in ks if k in rework]), len(ks)),
+                # a month with no trailers seen reads as unmeasured, not as clean
+                'fix_trailers_seen': sum(trailers[k] for k in ks),
+                'bug_closes_seen': sum(bug_closes[k] for k in ks)}
+    print(json.dumps({'by_repo': by_repo, 'unresolved_links': unresolved,
+                      'grouped_by_note': 'grouped by repo until a PR carries a role and team key; the glossary unit is per role and team'},
+                     indent=2, sort_keys=True))
 
 
 if __name__ == '__main__':
-    main(sys.argv[1])
+    main(*sys.argv[1:3])
