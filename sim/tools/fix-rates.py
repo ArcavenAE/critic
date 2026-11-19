@@ -11,8 +11,11 @@
 # is invisible here, so a low rate is a floor on the failures, not proof of none.
 # Input: {"prs": [{repo, number, mergedAt (null when unmerged), text (body plus commit messages)}],
 #         "bd_issues": [{id, issue_type}]}. Other keys are ignored and never printed.
-# Collect: gh pr list --repo OWNER/REPO --state merged --limit 500 --json number,mergedAt,body,commits \
-#   | jq --arg repo OWNER/REPO '[.[] | {repo: $repo, number, mergedAt, text: (.body + "\n" + ([.commits[].messageBody] | join("\n")))}]'
+# Collect: one `gh pr view` per PR, because a list call that asks for commits passes GitHub's GraphQL node limit
+#   above about 40 PRs:
+#   gh pr list --repo OWNER/REPO --state merged --limit 500 --json number --jq '.[].number' \
+#     | while read n; do gh pr view "$n" --repo OWNER/REPO --json number,mergedAt,body,commits; done \
+#     | jq -s --arg repo OWNER/REPO '[.[] | {repo: $repo, number, mergedAt, text: (.body + "\n" + ([.commits[].messageBody] | join("\n")))}]'
 #   and the bug ids from bd (issue_type = bug), as {id, issue_type} rows.
 # Usage: python3 -I fix-rates.py IN_JSON
 import json, re, sys
