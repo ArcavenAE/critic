@@ -75,7 +75,7 @@ Sources are those of the agent-team metrics survey behind this plan. Where two s
 
 ## flow efficiency
 
-- **Definition:** active time over elapsed time (the Flow Framework, Kersten, 2018, https://flowframework.org/ffc-discover/). The fleet's director waiting share is its inverse.
+- **Definition:** active time over elapsed time (the Flow Framework, in Kersten, *Project to Product*, IT Revolution, 2018). The fleet's director waiting share is its inverse.
 - **Start and end events:** the same pair as the cycle time it is computed over.
 - **Unit:** a ratio, 0 to 1.
 - **Fleet source:** the ledger's director classes, which split active turns from waiting.
@@ -86,7 +86,7 @@ Sources are those of the agent-team metrics survey behind this plan. Where two s
 
 - **Definition:** the share of merged changes later fixed by a fix pull request (the DORA delivery metric, https://dora.dev/guides/dora-metrics-four-keys/). The fleet has no deployments, so a merge stands in for a deployment.
 - **Start and end events:** the denominator is merges in the period; a merge counts as failed when a later pull request names it with a `Fixes-PR:` trailer.
-- **Unit:** a ratio of merges, per role and team.
+- **Unit:** a ratio of merges, by repo until a key exists (role and team wait on the task key).
 - **Fleet source:** GitHub, read through the `Fixes-PR:` trailer.
 - **Statistic:** the ratio for the period with n, and the series over periods. A small n is stated, not hidden.
 - **Reported with:** throughput.
@@ -95,15 +95,15 @@ Sources are those of the agent-team metrics survey behind this plan. Where two s
 
 - **Definition:** the share of merged changes that are unplanned fixes. It adapts DORA's deployment rework rate (https://dora.dev/insights/dora-metrics-history/) from deployments to merges.
 - **Start and end events:** a merge counts as rework when it is a fix pull request (a `Fixes-PR:` trailer) or closes a bd ticket of the bug type.
-- **Unit:** a ratio of merges, per role and team.
+- **Unit:** a ratio of merges, by repo until a key exists (role and team wait on the task key).
 - **Fleet source:** GitHub and bd.
 - **Statistic:** the ratio for the period with n, and the series over periods.
 - **Reported with:** throughput.
 
 ## human revision cost
 
-- **Definition:** the number of revision rounds an output needs before it merges, and the split between merged as is and merged after revision. The idea follows MetaGPT's human revision cost (Hong et al., 2024, https://proceedings.iclr.cc/paper_files/paper/2024/hash/6507b115562bb0a305f1958ccc87355a-Abstract-Conference.html).
-- **Start and end events:** start is the first review of the pull request; each review that carries a not-yet verdict, followed by new commits, is one round; end is the merge. The fleet posts reviews as comments with the verdict in the body, so the forge's changes-requested state undercounts and is not used.
+- **Definition:** the number of revision rounds an output needs before it merges, and the split between merged as is and merged after revision. The idea adapts MetaGPT's human revision cost (Hong et al., 2024, https://proceedings.iclr.cc/paper_files/paper/2024/hash/6507b115562bb0a305f1958ccc87355a-Abstract-Conference.html).
+- **Start and end events:** start is the first review of the pull request; each review that is in the `CHANGES_REQUESTED` state, or is a comment review whose body carries a not-yet verdict, followed by new commits, is one round; end is the merge. Both count: on the repos where the forge state is used it is the larger signal, and where reviews are posted as comments the verdict is in the body.
 - **Unit:** rounds per pull request.
 - **Fleet source:** GitHub reviews and commits.
 - **Statistic:** median with p25, p75 and n, and the share merged with zero rounds.
