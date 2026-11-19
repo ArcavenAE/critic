@@ -5,6 +5,8 @@
 > break down*. Pre-implementation; this doc is the scaffold that pins scope and
 > vocabulary before code.
 
+The glossary of agent-team metric terms, with each term's source, events, unit and statistic, is in `docs/analysis/glossary.md`.
+
 ## What this layer owns (the boundary with beadle)
 
 A boundary clarified in session-051 (see `docs/analysis/boundary-beadle.md`):
