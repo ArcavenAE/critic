@@ -209,6 +209,9 @@ class Exports(unittest.TestCase):
         self.assertEqual([a['n'], a['oldest'], a['oldest_id']], ['2', '264', '1'])
         w = rows[('wip', 'prs')]
         self.assertEqual([w['n'], w['median'], w['p25'], w['p75']], ['10', '2', '2', '2'])
+        # the WIP row ends an item at either terminal event, so its end_event names both
+        self.assertEqual(w['end_event'], 'PR merged (mergedAt) or closed unmerged (closedAt)')
+        self.assertEqual(w['start_event'], 'PR opened (createdAt)')
 
     def test_a_closed_unmerged_pr_leaves_wip_and_age_when_it_closes_and_is_never_throughput(self):
         # as-of the end of November, after the close: age holds PR 2 only; readings are 2 on days 1-19 and 1 on days 20-30
