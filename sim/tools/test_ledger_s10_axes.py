@@ -1308,5 +1308,79 @@ class T(unittest.TestCase):
         self.assertEqual(both[self.SPLIT_FILE], last[self.SPLIT_FILE])
 
 
+def rec_tok(sid, n, out_tok, in_tok=10, cr=100, cw=0, model=MODEL, ts='2026-10-05T10:00:00Z'):
+    """One request with chosen token counts, for the per-item statistics."""
+    r = rec(sid, n, ts=ts)
+    r['message']['model'] = model
+    r['message']['usage'] = {'input_tokens': in_tok, 'output_tokens': out_tok, 'cache_read_input_tokens': cr,
+                             'cache_creation_input_tokens': cw}
+    return r
+
+
+class PerItemStats(unittest.TestCase):
+    """M8: every per-item figure is reported as median, p25, p75 and n, never a mean alone.
+    The statistic field of each term is in critic docs/analysis/glossary.md (glossary.md#throughput and its siblings);
+    the percentile rule is linear interpolation between order statistics, stated in the script header."""
+    FILE = 'per-item-stats.csv'
+
+    def stats(self, recs_by_session, **kw):
+        sessions = [(sid, None, recs) for sid, recs in recs_by_session]
+        res = run(SCRIPT, sessions, **kw)
+        self.assertIn(self.FILE, res)
+        return {(r['item'], r['unit']): r for r in res[self.FILE]}
+
+    def test_output_tokens_per_request_reports_median_p25_p75_and_n_not_a_mean(self):
+        # five requests, outputs 1 2 3 4 100: the median is 3, p25 2, p75 4; a mean would read 22
+        recs = [rec_tok('s1', i, o) for i, o in enumerate((1, 2, 3, 4, 100))]
+        row = self.stats([('s1', recs)])[('tokens per request: output', 'tokens')]
+        self.assertEqual([row['n'], row['median'], row['p25'], row['p75']], ['5', '3', '2', '4'])
+
+    def test_the_file_has_no_mean_column(self):
+        res = run(SCRIPT, [('s1', None, [rec_tok('s1', 1, 7)])])
+        self.assertIn(self.FILE, res)
+        self.assertEqual(list(res[self.FILE][0].keys()), ['cluster', 'item', 'unit', 'n', 'median', 'p25', 'p75'])
+
+    def test_total_tokens_per_request_sums_all_four_classes(self):
+        # in 10 + cache write 20 + cache read 100 + out 5 = 135 for the only request
+        row = self.stats([('s1', [rec_tok('s1', 1, 5, in_tok=10, cr=100, cw=20)])])[('tokens per request: total', 'tokens')]
+        self.assertEqual([row['n'], row['median'], row['p25'], row['p75']], ['1', '135', '135', '135'])
+
+    def test_interpolates_between_order_statistics(self):
+        # four requests, outputs 10 20 30 40: p25 is 17.5, median 25, p75 32.5
+        recs = [rec_tok('s1', i, o) for i, o in enumerate((10, 20, 30, 40))]
+        row = self.stats([('s1', recs)])[('tokens per request: output', 'tokens')]
+        self.assertEqual([row['median'], row['p25'], row['p75']], ['25', '17.5', '32.5'])
+
+    def test_list_cost_per_request_counts_priced_requests_only(self):
+        # price 10000 micro-usd per token for every class; out 1 and out 3 cost (10+100+1)*10000 and (10+100+3)*10000
+        recs = [rec_tok('s1', 1, 1), rec_tok('s1', 2, 3), rec_tok('s1', 3, 50, model='unpriced-model')]
+        row = self.stats([('s1', recs)])[('list cost per request', 'usd_micro')]
+        self.assertEqual([row['n'], row['median']], ['2', '1120000'])
+
+    def test_requests_and_list_cost_per_session(self):
+        a = [rec_tok('sa', i, 1) for i in range(1, 4)]
+        b = [rec_tok('sb', i, 1) for i in range(11, 13)]
+        got = self.stats([('sa', a), ('sb', b)])
+        row = got[('requests per session', 'requests')]
+        self.assertEqual([row['n'], row['median'], row['p25'], row['p75']], ['2', '2.5', '2.25', '2.75'])
+        self.assertEqual(got[('list cost per session', 'usd_micro')]['n'], '2')
+
+    def test_a_figure_with_no_requests_prints_n_a_never_zero(self):
+        # the only request is synthetic, so nothing is counted
+        r = rec_tok('s1', 1, 5, model='<synthetic>')
+        row = self.stats([('s1', [r])])[('tokens per request: output', 'tokens')]
+        self.assertEqual([row['n'], row['median'], row['p25'], row['p75']], ['0', 'n/a', 'n/a', 'n/a'])
+
+    def test_a_one_request_figure_has_equal_quartiles(self):
+        row = self.stats([('s1', [rec_tok('s1', 1, 9)])])[('tokens per request: output', 'tokens')]
+        self.assertEqual([row['n'], row['median'], row['p25'], row['p75']], ['1', '9', '9', '9'])
+
+    def test_the_header_cites_the_glossary_and_states_the_percentile_rule(self):
+        with open(SCRIPT) as fh:
+            head = ''.join(l for l in iter(lambda: fh.readline(), '') if l.startswith('#'))
+        for want in ('glossary.md', 'per-item-stats.csv', 'p25', 'interpolat'):
+            self.assertIn(want, head)
+
+
 if __name__ == '__main__':
     unittest.main()
