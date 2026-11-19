@@ -14,16 +14,27 @@
 #   asks   start = ask accepted (the intake row's received_at); end = ask closed (the close row's closed_at)
 #   prs    start = PR opened (createdAt); end = PR merged (mergedAt). A PR closed unmerged is not throughput and has no cycle time.
 # Measures:
-#   throughput       items finished in PERIOD (end event in PERIOD): asks closed that have an intake row, PRs merged
+#   throughput       items finished in PERIOD (end event in PERIOD): asks closed that have an intake row, PRs merged. n is the
+#                    count; weekly_series is the count per seven-day bucket from the first of the month (days 1-7, 8-14, ...,
+#                    the last bucket short), and median, p25 and p75 describe that series.
 #   cycle time       end minus start, in hours, for items finished in PERIOD
-#   work item age    ASOF minus start, in hours, for items started on or before ASOF and not finished by ASOF
-#   wip              the count of those same unfinished items
+#   work item age    ASOF minus start, in hours, for items started on or before ASOF and not finished by ASOF; oldest and
+#                    oldest_id name the oldest open item, and work-item-age.csv lists every open item, oldest first
+#   wip              one reading at 00:00Z of each day of PERIOD up to ASOF: items started and not finished at that instant.
+#                    n is the number of readings; median, p25 and p75 are of the readings
 #   flow efficiency  one minus the director waiting share, from the ledger's director-wait-bridge.csv 'new' lines:
 #                    director sessions / (director sessions + hub wait), by list cost. A share of cost, not a duration,
-#                    so it names no start event; it is the ledger's proxy for active over elapsed until time-in-state exists.
+#                    so it names no start event and prints in the value column, with no n; it is the ledger's proxy for
+#                    active over elapsed until time-in-state exists.
 # Statistics: every per-item figure is n, median, p25 and p75, never a mean (linear interpolation between order statistics).
-# A figure with n of 0 prints n/a, never 0. A count (throughput, wip) carries n only.
-# Every throughput row carries its instability measure beside it; change fail rate is not computed yet, so it prints pending.
+# A figure with n of 0 prints n/a, never 0.
+# Pairings (glossary): throughput with change fail rate and rework rate; cycle time with rework rate; WIP with cycle time.
+# Change fail rate and rework rate are computed by fix-rates.py, not here, so they print pending.
+# Grouping: rows are by source (asks, PRs) because no ask or PR carries a role and team key yet; the glossary unit is per role
+# and team, and every row's note says so.
+# A PR closed unmerged is keyed by its number, so it never hides an open PR created in the same second.
+# gh pr list stops at --limit rows. When the export holds exactly 1000 rows, the script warns on stderr and every PR row's note
+# says older PRs may be missing.
 import csv, json, os, re, sys
 from datetime import datetime, timezone
 
@@ -63,9 +74,17 @@ for line in lines:
     if not isinstance(r, dict) or not isinstance(r.get('ask_id'), str): continue
     if r.get('event') == 'close': end.setdefault(r['ask_id'], ts(r.get('closed_at')))
     elif ts(r.get('received_at')): start.setdefault(r['ask_id'], ts(r.get('received_at')))
-asks = [(start[a], end.get(a)) for a in start]
-pulls = [(ts(p.get('createdAt')), ts(p.get('mergedAt'))) for p in prs if isinstance(p, dict)]
-pulls = [(s, e) for s, e in pulls if s is not None]
+asks = [(a, start[a], end.get(a)) for a in start]
+LIMIT = 1000
+pulls, closed_unmerged = [], set()
+for p in prs:
+    if not isinstance(p, dict) or ts(p.get('createdAt')) is None: continue
+    n = str(p.get('number'))
+    pulls.append((n, ts(p.get('createdAt')), ts(p.get('mergedAt'))))
+    # a PR closed unmerged has no merged time and would read as open forever; it is keyed by number, never by time
+    if p.get('state') == 'CLOSED' and not p.get('mergedAt'): closed_unmerged.add(n)
+TRUNC = len(prs) == LIMIT
+if TRUNC: print('flow-metrics: the pull request export holds exactly %d rows, the gh --limit; older PRs may be missing' % LIMIT, file=sys.stderr)
 
 def pct(v, q):
     x = q * (len(v) - 1); lo = int(x); hi = min(lo + 1, len(v) - 1); return v[lo] + (v[hi] - v[lo]) * (x - lo)
@@ -73,31 +92,48 @@ def fmt(x): return str(int(x)) if x == int(x) else str(round(x, 2))
 def hours(a, b): return (b - a).total_seconds() / 3600
 def spread(vals):
     v = sorted(vals)
-    if not v: return [0, 'n/a', 'n/a', 'n/a']
-    return [len(v)] + [fmt(pct(v, q)) for q in (.5, .25, .75)]
+    if not v: return ['n/a', 'n/a', 'n/a']
+    return [fmt(pct(v, q)) for q in (.5, .25, .75)]
 
+NOTE = 'grouped by source until an ask or PR carries a role and team key; the glossary unit is per role and team'
+PRNOTE = 'PR export holds exactly %d rows, the gh --limit; older PRs may be missing' % LIMIT
+HDR = ['metric', 'source', 'start_event', 'end_event', 'unit', 'n', 'median', 'p25', 'p75', 'oldest', 'oldest_id',
+       'weekly_series', 'value', 'instability_measure', 'instability_value', 'note']
 rows = []
-def add(metric, source, s_ev, e_ev, unit, stats, inst=('', '')): rows.append([metric, source, s_ev, e_ev, unit] + stats + list(inst))
+def add(metric, source, s_ev, e_ev, unit, n='', stats=('', '', ''), oldest=('', ''), weekly='', value='', inst=('', '')):
+    note = NOTE + (' | ' + PRNOTE if TRUNC and source == 'prs' else '')
+    rows.append([metric, source, s_ev, e_ev, unit, n, *stats, *oldest, weekly, value, *inst, note])
 ASK_S, ASK_E = 'ask accepted (intake received_at)', 'ask closed (close closed_at)'
 PR_S, PR_E = 'PR opened (createdAt)', 'PR merged (mergedAt)'
 UNFIN = 'as-of instant'
-INST = ('change fail rate', 'pending')
-done_a = [(s, e) for s, e in asks if inperiod(e)]
-done_p = [(s, e) for s, e in pulls if inperiod(e)]
-add('throughput', 'asks', ASK_S, ASK_E, 'asks closed', [len(done_a), '', '', ''], INST)
-add('throughput', 'prs', PR_S, PR_E, 'PRs merged', [len(done_p), '', '', ''], INST)
-add('cycle time', 'asks', ASK_S, ASK_E, 'hours', spread([hours(s, e) for s, e in done_a]))
-add('cycle time', 'prs', PR_S, PR_E, 'hours', spread([hours(s, e) for s, e in done_p]))
-def unfinished(items): return [s for s, e in items if s <= ASOF and (e is None or e > ASOF)]
-ua = unfinished(asks)
-# a PR closed unmerged has no merged time and would read as open forever, so it is excluded from the unfinished set
-closed_unmerged = {ts(p.get('createdAt')) for p in prs if isinstance(p, dict) and p.get('state') == 'CLOSED' and not p.get('mergedAt')
-                   and ts(p.get('closedAt')) is not None and ts(p.get('closedAt')) <= ASOF}
-up = [s for s, e in pulls if s <= ASOF and (e is None or e > ASOF) and s not in closed_unmerged]
-add('work item age', 'asks', ASK_S, UNFIN, 'hours', spread([hours(s, ASOF) for s in ua]))
-add('work item age', 'prs', PR_S, UNFIN, 'hours', spread([hours(s, ASOF) for s in up]))
-add('wip', 'asks', ASK_S, ASK_E, 'asks open', [len(ua), '', '', ''], ('cycle time', 'see cycle time row'))
-add('wip', 'prs', PR_S, PR_E, 'PRs open', [len(up), '', '', ''], ('cycle time', 'see cycle time row'))
+INST_T = ('change fail rate; rework rate', 'pending; pending')
+INST_C = ('rework rate', 'pending')
+INST_W = ('cycle time', 'see cycle time row')
+done_a = [(a, s, e) for a, s, e in asks if inperiod(e)]
+done_p = [(a, s, e) for a, s, e in pulls if inperiod(e)]
+ndays = (END - datetime(y, m, 1, tzinfo=timezone.utc)).days
+def weekly(items):
+    buckets = [0] * ((ndays + 6) // 7)
+    for _, _, e in items: buckets[(e.day - 1) // 7] += 1
+    return buckets
+for src, done, s_ev, e_ev, unit in (('asks', done_a, ASK_S, ASK_E, 'asks closed'), ('prs', done_p, PR_S, PR_E, 'PRs merged')):
+    wk = weekly(done)
+    add('throughput', src, s_ev, e_ev, unit, len(done), spread(wk), weekly=';'.join(map(str, wk)), inst=INST_T)
+for src, done, s_ev, e_ev in (('asks', done_a, ASK_S, ASK_E), ('prs', done_p, PR_S, PR_E)):
+    add('cycle time', src, s_ev, e_ev, 'hours', len(done), spread([hours(s, e) for _, s, e in done]), inst=INST_C)
+def open_at(items, t):
+    return [(a, s) for a, s, e in items if s <= t and (e is None or e > t) and a not in closed_unmerged]
+age_rows = []
+for src, items, s_ev in (('asks', asks, ASK_S), ('prs', pulls, PR_S)):
+    op = sorted(open_at(items, ASOF), key=lambda x: x[1])
+    ages = [hours(s, ASOF) for _, s in op]
+    age_rows += [[src, a, s.strftime('%Y-%m-%dT%H:%M:%SZ'), fmt(hours(s, ASOF))] for a, s in op]
+    add('work item age', src, s_ev, UNFIN, 'hours', len(op), spread(ages), oldest=(fmt(ages[0]), op[0][0]) if op else ('n/a', 'n/a'))
+    readings = []
+    for d in range(ndays):
+        t = datetime(y, m, 1 + d, tzinfo=timezone.utc)
+        if t <= ASOF: readings.append(len(open_at(items, t)))
+    add('wip', src, s_ev, ASK_E if src == 'asks' else PR_E, 'items per reading', len(readings), spread(readings), inst=INST_W)
 
 fe = 'pending'
 if LEDGER:
@@ -107,10 +143,11 @@ if LEDGER:
         d, h = u.get('director sessions (coordination)'), u.get('hub wait (bus polling)')
         fe = fmt(d / (d + h)) if d is not None and h is not None and d + h > 0 else 'n/a'
     except (OSError, KeyError, ValueError): fe = 'n/a'
-add('flow efficiency', 'ledger', 'n/a (a share, not a duration)', 'n/a (a share, not a duration)', 'share of list cost', ['', fe, '', ''], ('cycle time', 'see cycle time row'))
+add('flow efficiency', 'ledger', 'n/a (a share, not a duration)', 'n/a (a share, not a duration)', 'share of list cost', value=fe, inst=INST_W)
 
 os.makedirs(OUT, exist_ok=True)
 with open(os.path.join(OUT, 'flow-metrics.csv'), 'w', newline='') as fh:
-    w = csv.writer(fh, lineterminator='\n')
-    w.writerow(['metric', 'source', 'start_event', 'end_event', 'unit', 'n', 'median', 'p25', 'p75', 'instability_measure', 'instability_value'])
-    w.writerows(rows)
+    w = csv.writer(fh, lineterminator='\n'); w.writerow(HDR); w.writerows(rows)
+# every open item at ASOF, oldest first within each source
+with open(os.path.join(OUT, 'work-item-age.csv'), 'w', newline='') as fh:
+    w = csv.writer(fh, lineterminator='\n'); w.writerow(['source', 'id', 'start', 'age_hours']); w.writerows(age_rows)

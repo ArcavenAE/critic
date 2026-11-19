@@ -66,15 +66,15 @@ def run(asks=ASKS, prs=PRS, period='2026-11', asof='', ledger=None, raw=False):
         r = subprocess.run([sys.executable, '-I', SCRIPT, out, ap, pp, period, asof, lg], capture_output=True, text=True)
         f = os.path.join(out, 'flow-metrics.csv')
         rows = Rows()
-        af = os.path.join(out, 'work-item-age.csv')
-        if os.path.exists(af):
-            with open(af) as fh:
-                rows['_age'] = list(csv.DictReader(fh))
         if os.path.exists(f):
             with open(f) as fh:
                 rdr = csv.DictReader(fh)
                 rows = Rows({(x['metric'], x['source']): Row(x) for x in rdr})
                 rows['_cols'] = rdr.fieldnames
+        af = os.path.join(out, 'work-item-age.csv')
+        if os.path.exists(af):
+            with open(af) as fh:
+                rows['_age'] = list(csv.DictReader(fh))
         return rows, r
 
 
