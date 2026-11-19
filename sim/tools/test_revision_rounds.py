@@ -12,9 +12,12 @@ def review(ts, state='COMMENTED', body=''):
     return {'state': state, 'submittedAt': ts, 'body': body}
 
 
-def pr(n, reviews, commits, merged=True, repo='demo/alpha'):
-    return {'repo': repo, 'number': n, 'merged': merged, 'author': 'someone-seat-g1-0',
-            'reviews': reviews, 'commits': [{'committedDate': c} for c in commits]}
+def pr(n, reviews, commits, merged=True, repo='demo/alpha', state=None):
+    if state is None:
+        state = 'MERGED' if merged else 'CLOSED'
+    return {'repo': repo, 'number': n, 'merged': merged, 'state': state, 'author': 'someone-seat-g1-0',
+            'reviews': reviews,
+            'commits': [c if isinstance(c, dict) else {'committedDate': c} for c in commits]}
 
 
 def run(prs):
@@ -85,6 +88,31 @@ class Rounds(unittest.TestCase):
             out = run([pr(n, [review('2026-11-01T10:00:00Z', body=b)], ['2026-11-01T09:00:00Z', '2026-11-01T11:00:00Z'])])
             self.assertEqual(by_number(out, n)['rounds'], 0, b)
 
+    def test_the_verdict_shapes_in_use_in_the_fleet_count(self):
+        # Opening lines of two fleet reviews, as posted on kos#216 and kos#213, with the commit hashes shortened.
+        bodies = ['**Verdict: NOT YET** at `fc6b8b88140e`. I read the full diff against the head and ran the new tests.',
+                  'NOT YET at 77fb6636. SI-8 is the probe\'s hardest-won lesson, so its refusal has to hold up.']
+        for i, b in enumerate(bodies):
+            n = 40 + i
+            out = run([pr(n, [review('2026-11-01T10:00:00Z', body=b)], ['2026-11-01T09:00:00Z', '2026-11-01T11:00:00Z'])])
+            self.assertEqual(by_number(out, n)['rounds'], 1, b)
+
+    def test_a_base_merge_after_a_not_yet_is_not_the_answering_commit(self):
+        merge = {'committedDate': '2026-11-01T11:00:00Z', 'messageHeadline': "Merge branch 'main' into build/x"}
+        out = run([pr(50, [review('2026-11-01T10:00:00Z', body='Verdict: NOT YET')], ['2026-11-01T09:00:00Z', merge])])
+        self.assertEqual(by_number(out, 50)['rounds'], 0)
+
+    def test_a_merge_commit_with_two_parents_is_not_the_answering_commit(self):
+        merge = {'committedDate': '2026-11-01T11:00:00Z', 'messageHeadline': 'sync', 'parents': ['a', 'b']}
+        out = run([pr(51, [review('2026-11-01T10:00:00Z', body='Verdict: NOT YET')], ['2026-11-01T09:00:00Z', merge])])
+        self.assertEqual(by_number(out, 51)['rounds'], 0)
+
+    def test_the_real_fix_after_a_base_merge_is_the_answering_commit(self):
+        merge = {'committedDate': '2026-11-01T11:00:00Z', 'messageHeadline': "Merge branch 'main' into build/x"}
+        out = run([pr(52, [review('2026-11-01T10:00:00Z', body='Verdict: NOT YET')],
+                      ['2026-11-01T09:00:00Z', merge, '2026-11-01T12:00:00Z'])])
+        self.assertEqual(by_number(out, 52)['rounds'], 1)
+
 
 class Summary(unittest.TestCase):
     def prs(self):
@@ -131,6 +159,23 @@ class Summary(unittest.TestCase):
         self.assertNotIn('throughput_merged', s)
         self.assertNotIn('merged_as_is', s)
         self.assertNotIn('merged_after_revision', s)
+
+    def test_an_open_pr_is_not_counted_as_closed_unmerged(self):
+        prs = self.prs() + [pr(7, [], ['2026-11-01T08:00:00Z'], merged=False, state='OPEN')]
+        s = run(prs)['summary']
+        self.assertEqual(s['closed_unmerged'], 1)
+        self.assertEqual(s['open'], 1)
+
+    def test_a_non_merged_pr_with_no_state_is_reported_as_unknown_not_closed(self):
+        p = pr(8, [], [], merged=False)
+        del p['state']
+        s = run(self.prs()[:1] + [p])['summary']
+        self.assertEqual(s['closed_unmerged'], 0)
+        self.assertEqual(s['state_unknown'], 1)
+
+    def test_share_merged_with_zero_rounds_is_reported(self):
+        i = run(self.prs())['summary']['throughput']['instability']
+        self.assertEqual(i['share_as_is'], 0.4)
 
     def test_groups_by_repo_and_never_names_an_author(self):
         prs = self.prs()
