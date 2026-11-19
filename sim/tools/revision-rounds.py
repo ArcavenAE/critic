@@ -7,15 +7,21 @@
 # commits_after_first_review is reported beside rounds, because a PR can be revised after an unlabeled review.
 # Input: a JSON list of PRs, each {repo, number, merged, reviews:[{state, submittedAt, body}], commits:[{committedDate}]}
 #   (a `gh pr view --json` export reshaped to that form). Other keys, authors included, are ignored and never printed.
-# Output: JSON with per-PR rounds, a summary (median, p25, p75 and n over merged PRs, with the merged count, the
-#   as-is and after-revision split and the unmerged count beside it) and the same summary by repo. Never a mean,
+# Output: JSON with per-PR rounds, a summary (the merged count with its instability measure in one object: median, p25,
+#   p75 and n of rounds, the as-is and after-revision split and the share revised; the unmerged count beside it) and the same summary by repo. Never a mean,
 #   never per seat. A diagnostic, never a gate (ADR-007).
-# Collect: gh pr list --repo OWNER/REPO --state all --limit 200 --json number,mergedAt,reviews,commits \
-#   | jq --arg repo OWNER/REPO '[.[] | {repo: $repo, number, merged: (.mergedAt != null), reviews, commits}]' > prs.json
+# Collect: one `gh pr view` per PR, because a list call that asks for reviews and commits together passes GitHub's
+#   GraphQL node limit above about 40 PRs:
+#   gh pr list --repo OWNER/REPO --state all --limit 500 --json number --jq '.[].number' \
+#     | while read n; do gh pr view "$n" --repo OWNER/REPO --json number,mergedAt,reviews,commits; done \
+#     | jq -s --arg repo OWNER/REPO '[.[] | {repo: $repo, number, merged: (.mergedAt != null), reviews, commits}]' > prs.json
 # Usage: python3 -I revision-rounds.py PRS_JSON
 import json, re, statistics, sys
 
-NOT_YET = re.compile(r'^[ \t]*Verdict:[ \t]*NOT YET\b', re.MULTILINE | re.IGNORECASE)
+# A line, after any markdown lead (quote, heading, bullet, bold), that says "Verdict: NOT YET" in any case or starts
+# with the bare capitals "NOT YET". "**Verdict: NOT YET** at <sha>" and "NOT YET at <sha>" both count; prose such as
+# "not yet covered" and a "NOT YET" quoted mid-line do not.
+NOT_YET = re.compile(r'^[ \t>#*_-]*(?:(?i:verdict:[ \t*_]*not yet)|NOT YET)\b', re.MULTILINE)
 
 
 def is_revision(r):
@@ -47,9 +53,13 @@ def spread(values):
 
 def summarize(rows):
     merged = [r['rounds'] for r in rows if r['merged']]
-    return {'rounds': spread(merged), 'throughput_merged': len(merged),
-            'merged_as_is': len([x for x in merged if x == 0]),
-            'merged_after_revision': len([x for x in merged if x > 0]),
+    after = len([x for x in merged if x > 0])
+    # throughput never prints alone: it sits in one object with the instability measure it is read against
+    return {'throughput': {'merged': len(merged),
+                           'instability': {'rounds': spread(merged),
+                                           'merged_as_is': len(merged) - after,
+                                           'merged_after_revision': after,
+                                           'share_after_revision': (after / len(merged)) if merged else None}},
             'closed_unmerged': len([r for r in rows if not r['merged']])}
 
 
