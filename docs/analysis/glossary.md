@@ -2,7 +2,7 @@
 
 This glossary fixes ten terms used when the fleet measures its own agent teams, so critic, director and marvel mean the same thing by each. critic computes the numbers; director and marvel collect and emit what critic reads. Each entry names its published source, its start and end events, its unit, the fleet source, the statistic, and the instability measure it is reported with.
 
-Every metric here is diagnostic. None is a gate, and none turns into a pass or fail without its own ratified decision. Report a median with its p25, p75 and n, never a mean alone. Report by role and team, not by seat. A throughput count is never printed alone: it sits beside its instability measure, so no single number can be chased.
+Every metric here is diagnostic. None is a gate, and none turns into a pass or fail without its own ratified decision. Report a median with its p25, p75 and n, never a mean alone. Report by role and team, not by seat. Until a key exists, report by repo. A throughput count is never printed alone: it sits beside its instability measure, so no single number can be chased.
 
 Sources are those of the agent-team metrics survey behind this plan. Where two sources define a term differently, the entry says which start and end events the fleet uses.
 
@@ -32,7 +32,7 @@ Sources are those of the agent-team metrics survey behind this plan. Where two s
 
 - **Definition:** items finished per period, as the Kanban Guide defines it (Coleman et al., 2025, https://kanbanguides.org/english/).
 - **Start and end events:** a count at the end event only: a pull request merged, or an ask closed.
-- **Unit:** items per week, per role and team.
+- **Unit:** items per week.
 - **Fleet source:** GitHub merges; asks closed in director's asks.jsonl.
 - **Statistic:** the count for the period, with the weekly series beside it; the median and spread of that series.
 - **Reported with:** change fail rate and rework rate. A rise in throughput that comes with a rise in either is not an improvement.
@@ -59,7 +59,7 @@ Sources are those of the agent-team metrics survey behind this plan. Where two s
 
 - **Definition:** work in progress: items started and not finished (Kanban Guide).
 - **Start and end events:** an item counts from its start event until its end event, as for cycle time.
-- **Unit:** items, per role and team, at a point in time.
+- **Unit:** items, at a point in time.
 - **Fleet source:** open asks plus open pull requests.
 - **Statistic:** the count at each reading, summarized as the median and p75 of the readings in the period.
 - **Reported with:** cycle time. WIP and cycle time rise together when work piles up.
@@ -85,8 +85,8 @@ Sources are those of the agent-team metrics survey behind this plan. Where two s
 ## change fail rate
 
 - **Definition:** the share of merged changes later fixed by a fix pull request (the DORA delivery metric, https://dora.dev/guides/dora-metrics-four-keys/). The fleet has no deployments, so a merge stands in for a deployment.
-- **Start and end events:** the denominator is merges in the period; a merge counts as failed when a later pull request names it with a `Fixes-PR:` trailer.
-- **Unit:** a ratio of merges, by repo until a key exists (role and team wait on the task key).
+- **Start and end events:** the denominator is merges in the period; a merge counts as failed when a later merged pull request names it with a `Fixes-PR:` trailer.
+- **Unit:** a ratio of merges.
 - **Fleet source:** GitHub, read through the `Fixes-PR:` trailer.
 - **Statistic:** the ratio for the period with n, and the series over periods. A small n is stated, not hidden.
 - **Reported with:** throughput.
@@ -95,7 +95,7 @@ Sources are those of the agent-team metrics survey behind this plan. Where two s
 
 - **Definition:** the share of merged changes that are unplanned fixes. It adapts DORA's deployment rework rate (https://dora.dev/insights/dora-metrics-history/) from deployments to merges.
 - **Start and end events:** a merge counts as rework when it is a fix pull request (a `Fixes-PR:` trailer) or closes a bd ticket of the bug type.
-- **Unit:** a ratio of merges, by repo until a key exists (role and team wait on the task key).
+- **Unit:** a ratio of merges.
 - **Fleet source:** GitHub and bd.
 - **Statistic:** the ratio for the period with n, and the series over periods.
 - **Reported with:** throughput.
