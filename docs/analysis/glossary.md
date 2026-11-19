@@ -4,7 +4,7 @@ This glossary fixes ten terms used when the fleet measures its own agent teams, 
 
 Every metric here is diagnostic. None is a gate, and none turns into a pass or fail without its own ratified decision. Report a median with its p25, p75 and n, never a mean alone. Report by role and team, not by seat. A throughput count is never printed alone: it sits beside its instability measure, so no single number can be chased.
 
-Sources are the I-601 survey's. Where two sources define a term differently, the entry says which start and end events the fleet uses.
+Sources are those of the agent-team metrics survey behind this plan. Where two sources define a term differently, the entry says which start and end events the fleet uses.
 
 | term | reported with |
 |---|---|
