@@ -12,7 +12,8 @@
 # glossary.md#work-item-age, glossary.md#wip, glossary.md#flow-efficiency).
 # Start and end events, named in every row:
 #   asks   start = ask accepted (the intake row's received_at); end = ask closed (the close row's closed_at)
-#   prs    start = PR opened (createdAt); end = PR merged (mergedAt). A PR closed unmerged is not throughput and has no cycle time.
+#   prs    start = PR opened (createdAt); end = PR merged (mergedAt). A PR closed unmerged is not throughput and has no cycle time;
+#          for WIP it ends at closedAt, so the WIP row's end_event names both: PR merged (mergedAt) or closed unmerged (closedAt).
 # Measures:
 #   throughput       items finished in PERIOD (end event in PERIOD): asks closed that have an intake row, PRs merged. n is the
 #                    count; weekly_series is the count per seven-day bucket from the first of the month (days 1-7, 8-14, ...,
@@ -108,6 +109,7 @@ def add(metric, source, s_ev, e_ev, unit, n='', stats=('', '', ''), oldest=('', 
     rows.append([metric, source, s_ev, e_ev, unit, n, *stats, *oldest, weekly, value, *inst, note])
 ASK_S, ASK_E = 'ask accepted (intake received_at)', 'ask closed (close closed_at)'
 PR_S, PR_E = 'PR opened (createdAt)', 'PR merged (mergedAt)'
+PR_E_WIP = 'PR merged (mergedAt) or closed unmerged (closedAt)'   # WIP ends a PR at either terminal event
 UNFIN = 'as-of instant'
 INST_T = ('change fail rate; rework rate', 'pending; pending')
 INST_C = ('rework rate', 'pending')
@@ -136,7 +138,7 @@ for src, items, s_ev in (('asks', asks, ASK_S), ('prs', pulls_open, PR_S)):
     for d in range(ndays):
         t = datetime(y, m, 1 + d, tzinfo=timezone.utc)
         if t <= ASOF: readings.append(len(open_at(items, t)))
-    add('wip', src, s_ev, ASK_E if src == 'asks' else PR_E, 'items per reading', len(readings), spread(readings), inst=INST_W)
+    add('wip', src, s_ev, ASK_E if src == 'asks' else PR_E_WIP, 'items per reading', len(readings), spread(readings), inst=INST_W)
 
 fe = 'pending'
 if LEDGER:
