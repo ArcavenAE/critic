@@ -112,7 +112,10 @@ class Grouping(unittest.TestCase):
         self.assertNotIn('by_period', run([pr(1, '2026-11-01T10:00:00Z')]))
 
     def test_the_unit_waits_on_a_role_and_team_key_and_says_so(self):
-        self.assertIn('role and team', at(run([]), 'grouped_by_note'))
+        note = at(run([]), 'grouped_by_note')
+        self.assertIn('by repo until a key exists', note)
+        self.assertIn('role and team', note)
+        self.assertNotIn('is per role and team', note)
 
 
 class Unmeasured(unittest.TestCase):

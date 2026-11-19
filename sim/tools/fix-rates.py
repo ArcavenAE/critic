@@ -5,8 +5,8 @@
 #   fixes name it. A fix merged before its target does not fail it.
 # Rework rate: the share of changes merged in a period that are unplanned fixes: a merged PR that carries a Fixes-PR
 #   trailer, or a line that starts "Closes: <bd id>" naming a bd ticket of type bug. A "Refs:" line is not rework.
-# Unit: grouped by repo, because no PR field carries a role and team yet; the glossary unit is per role and team, so the
-#   output says so (grouped_by_note) and the grouping moves to that key when one exists.
+# Unit: by repo until a key exists. No PR field carries a role and team yet, so the output says so (grouped_by_note), as the
+#   glossary does; the grouping moves to that key when one exists.
 # Period: the calendar month (YYYY-MM) of the merge, or the ISO week with the week argument. A fix counts against the period of the change it fixes.
 # Throughput (merged PRs in the period) prints beside both rates; a rate is never read alone. Counts and rates only,
 # no mean, no author, no seat. A diagnostic, never a gate (ADR-007). Trailers are a signal; a fix with no trailer
@@ -96,7 +96,7 @@ def main(path, kind='month'):
                 'fix_trailers_seen': sum(trailers[k] for k in ks),
                 'bug_closes_seen': sum(bug_closes[k] for k in ks)}
     print(json.dumps({'by_repo': by_repo, 'unresolved_links': unresolved,
-                      'grouped_by_note': 'grouped by repo until a PR carries a role and team key; the glossary unit is per role and team'},
+                      'grouped_by_note': 'by repo until a key exists; no PR field carries a role and team yet'},
                      indent=2, sort_keys=True))
 
 
