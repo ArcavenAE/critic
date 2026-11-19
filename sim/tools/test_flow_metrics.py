@@ -197,6 +197,29 @@ class Exports(unittest.TestCase):
         a = rows[('work item age', 'prs')]
         self.assertEqual([a['n'], a['oldest_id']], ['1', '5'])
 
+    CLOSED_UNMERGED = [
+        {'number': 1, 'state': 'CLOSED', 'createdAt': '2026-10-30T00:00:00Z', 'mergedAt': None, 'closedAt': '2026-11-20T00:00:00Z'},
+        {'number': 2, 'state': 'OPEN', 'createdAt': '2026-11-01T00:00:00Z', 'mergedAt': None, 'closedAt': None}]
+
+    def test_a_closed_unmerged_pr_counts_as_open_until_it_closes(self):
+        # as-of 11-10, before PR 1 closes: both PRs are in age (264 h and 216 h) and in every daily reading up to 11-10
+        rows, r = run(prs=self.CLOSED_UNMERGED, asof='2026-11-10T00:00:00Z')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        a = rows[('work item age', 'prs')]
+        self.assertEqual([a['n'], a['oldest'], a['oldest_id']], ['2', '264', '1'])
+        w = rows[('wip', 'prs')]
+        self.assertEqual([w['n'], w['median'], w['p25'], w['p75']], ['10', '2', '2', '2'])
+
+    def test_a_closed_unmerged_pr_leaves_wip_and_age_when_it_closes_and_is_never_throughput(self):
+        # as-of the end of November, after the close: age holds PR 2 only; readings are 2 on days 1-19 and 1 on days 20-30
+        rows, r = run(prs=self.CLOSED_UNMERGED)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([rows[('work item age', 'prs')]['n'], rows[('work item age', 'prs')]['oldest_id']], ['1', '2'])
+        w = rows[('wip', 'prs')]
+        self.assertEqual([w['n'], w['median'], w['p25'], w['p75']], ['30', '2', '1', '2'])
+        self.assertEqual(rows[('throughput', 'prs')]['n'], '0')
+        self.assertEqual(rows[('cycle time', 'prs')]['n'], '0')
+
     def test_an_export_that_holds_exactly_the_gh_limit_is_flagged_as_possibly_truncated(self):
         prs = [{'number': i, 'state': 'MERGED', 'createdAt': '2026-11-01T00:00:00Z', 'mergedAt': '2026-11-01T01:00:00Z',
                 'closedAt': '2026-11-01T01:00:00Z'} for i in range(1, 1001)]
