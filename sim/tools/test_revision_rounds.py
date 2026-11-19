@@ -134,7 +134,7 @@ class Summary(unittest.TestCase):
         return [p(1, 0), p(2, 0), p(3, 1), p(4, 2), p(5, 3), p(6, 9, merged=False)]
 
     def test_median_p25_p75_and_n_over_merged_prs(self):
-        s = at(run(self.prs()), 'summary', 'throughput', 'instability', 'rounds')
+        s = at(run(self.prs()), 'summary', 'throughput', 'human_revision_cost', 'rounds')
         self.assertEqual((s['median'], s['p25'], s['p75'], s['n']), (1, 0, 2, 5))
 
     def test_no_mean_is_reported(self):
@@ -146,21 +146,21 @@ class Summary(unittest.TestCase):
 
     def test_unmerged_prs_stay_out_of_the_distribution(self):
         out = run(self.prs())
-        self.assertEqual(at(out, 'summary', 'throughput', 'instability', 'rounds', 'n'), 5)
+        self.assertEqual(at(out, 'summary', 'throughput', 'human_revision_cost', 'rounds', 'n'), 5)
         self.assertEqual(by_number(out, 6)['rounds'], 9)
 
-    def test_throughput_sits_in_one_object_with_its_instability_measure(self):
+    def test_throughput_sits_in_one_object_with_its_human_revision_cost(self):
         pair = at(run(self.prs()), 'summary', 'throughput')
         self.assertEqual(pair['merged'], 5)
-        self.assertEqual(at(pair, 'instability', 'rounds', 'median'), 1)
-        self.assertEqual(at(pair, 'instability', 'merged_after_revision'), 3)
-        self.assertEqual(at(pair, 'instability', 'share_after_revision'), 0.6)
-        self.assertEqual(at(pair, 'instability', 'merged_as_is'), 2)
+        self.assertEqual(at(pair, 'human_revision_cost', 'rounds', 'median'), 1)
+        self.assertEqual(at(pair, 'human_revision_cost', 'merged_after_revision'), 3)
+        self.assertEqual(at(pair, 'human_revision_cost', 'share_after_revision'), 0.6)
+        self.assertEqual(at(pair, 'human_revision_cost', 'merged_as_is'), 2)
 
     def test_every_repo_group_carries_the_same_pairing(self):
         by = at(run(self.prs()), 'by_repo', 'demo/alpha')
         self.assertEqual(at(by, 'throughput', 'merged'), 5)
-        self.assertIn('rounds', at(by, 'throughput', 'instability'))
+        self.assertIn('rounds', at(by, 'throughput', 'human_revision_cost'))
 
     def test_no_bare_throughput_count_outside_the_pairing(self):
         s = run(self.prs())['summary']
@@ -182,7 +182,7 @@ class Summary(unittest.TestCase):
         self.assertEqual(at(s, 'state_unknown'), 1)
 
     def test_share_merged_with_zero_rounds_is_reported(self):
-        i = at(run(self.prs()), 'summary', 'throughput', 'instability')
+        i = at(run(self.prs()), 'summary', 'throughput', 'human_revision_cost')
         self.assertEqual(at(i, 'share_as_is'), 0.4)
 
     def test_groups_by_repo_and_never_names_an_author(self):
@@ -194,9 +194,9 @@ class Summary(unittest.TestCase):
 
     def test_empty_input_reports_n_zero_and_no_figures(self):
         s = at(run([]), 'summary', 'throughput')
-        self.assertEqual(at(s, 'instability', 'rounds', 'n'), 0)
-        self.assertIsNone(at(s, 'instability', 'rounds', 'median'))
-        self.assertIsNone(at(s, 'instability', 'share_after_revision'))
+        self.assertEqual(at(s, 'human_revision_cost', 'rounds', 'n'), 0)
+        self.assertIsNone(at(s, 'human_revision_cost', 'rounds', 'median'))
+        self.assertIsNone(at(s, 'human_revision_cost', 'share_after_revision'))
         self.assertEqual(at(s, 'merged'), 0)
 
 
