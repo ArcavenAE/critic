@@ -69,6 +69,22 @@ class Rounds(unittest.TestCase):
         out = run([pr(6, [review('2026-11-01T10:00:00Z', body='Verdict: NOT YET')], ['2026-11-01T09:00:00Z'])])
         self.assertEqual(by_number(out, 6)['rounds'], 0)
 
+    def test_markdown_and_trailing_forms_of_the_verdict_count(self):
+        bodies = ['**Verdict: NOT YET** at abc1234', 'NOT YET at abc1234', '> **Verdict:** NOT YET', '## Verdict: not yet',
+                  'Summary first.\n\n- **Verdict: NOT YET** at abc1234']
+        for i, b in enumerate(bodies):
+            n = 20 + i
+            out = run([pr(n, [review('2026-11-01T10:00:00Z', body=b), review('2026-11-01T12:00:00Z', body='Verdict: PASS')],
+                          ['2026-11-01T09:00:00Z', '2026-11-01T11:00:00Z'])])
+            self.assertEqual(by_number(out, n)['rounds'], 1, b)
+
+    def test_prose_that_only_mentions_not_yet_does_not_count(self):
+        for i, b in enumerate(['This is not yet covered by a test.', 'Not yet implemented, per the author.',
+                               'PASS at abc1234; the NOT YET from earlier is resolved']):
+            n = 30 + i
+            out = run([pr(n, [review('2026-11-01T10:00:00Z', body=b)], ['2026-11-01T09:00:00Z', '2026-11-01T11:00:00Z'])])
+            self.assertEqual(by_number(out, n)['rounds'], 0, b)
+
 
 class Summary(unittest.TestCase):
     def prs(self):
@@ -82,24 +98,39 @@ class Summary(unittest.TestCase):
         return [p(1, 0), p(2, 0), p(3, 1), p(4, 2), p(5, 3), p(6, 9, merged=False)]
 
     def test_median_p25_p75_and_n_over_merged_prs(self):
-        s = run(self.prs())['summary']['rounds']
+        s = run(self.prs())['summary']['throughput']['instability']['rounds']
         self.assertEqual((s['median'], s['p25'], s['p75'], s['n']), (1, 0, 2, 5))
 
     def test_no_mean_is_reported(self):
-        s = run(self.prs())['summary']['rounds']
-        self.assertNotIn('mean', s)
+        self.assertNotIn('mean', json.dumps(run(self.prs())['summary']))
 
     def test_throughput_is_printed_beside_the_revision_figures(self):
         s = run(self.prs())['summary']
-        self.assertEqual(s['throughput_merged'], 5)
-        self.assertEqual(s['merged_as_is'], 2)
-        self.assertEqual(s['merged_after_revision'], 3)
         self.assertEqual(s['closed_unmerged'], 1)
 
     def test_unmerged_prs_stay_out_of_the_distribution(self):
         out = run(self.prs())
-        self.assertEqual(out['summary']['rounds']['n'], 5)
+        self.assertEqual(out['summary']['throughput']['instability']['rounds']['n'], 5)
         self.assertEqual(by_number(out, 6)['rounds'], 9)
+
+    def test_throughput_sits_in_one_object_with_its_instability_measure(self):
+        pair = run(self.prs())['summary']['throughput']
+        self.assertEqual(pair['merged'], 5)
+        self.assertEqual(pair['instability']['rounds']['median'], 1)
+        self.assertEqual(pair['instability']['merged_after_revision'], 3)
+        self.assertEqual(pair['instability']['share_after_revision'], 0.6)
+        self.assertEqual(pair['instability']['merged_as_is'], 2)
+
+    def test_every_repo_group_carries_the_same_pairing(self):
+        by = run(self.prs())['by_repo']['demo/alpha']
+        self.assertEqual(by['throughput']['merged'], 5)
+        self.assertIn('rounds', by['throughput']['instability'])
+
+    def test_no_bare_throughput_count_outside_the_pairing(self):
+        s = run(self.prs())['summary']
+        self.assertNotIn('throughput_merged', s)
+        self.assertNotIn('merged_as_is', s)
+        self.assertNotIn('merged_after_revision', s)
 
     def test_groups_by_repo_and_never_names_an_author(self):
         prs = self.prs()
@@ -109,10 +140,11 @@ class Summary(unittest.TestCase):
         self.assertNotIn('someone-seat-g1-0', json.dumps(out))
 
     def test_empty_input_reports_n_zero_and_no_figures(self):
-        s = run([])['summary']
-        self.assertEqual(s['rounds']['n'], 0)
-        self.assertIsNone(s['rounds']['median'])
-        self.assertEqual(s['throughput_merged'], 0)
+        s = run([])['summary']['throughput']
+        self.assertEqual(s['instability']['rounds']['n'], 0)
+        self.assertIsNone(s['instability']['rounds']['median'])
+        self.assertIsNone(s['instability']['share_after_revision'])
+        self.assertEqual(s['merged'], 0)
 
 
 if __name__ == '__main__':
