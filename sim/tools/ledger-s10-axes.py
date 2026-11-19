@@ -106,7 +106,7 @@
 # (cache write is the 5 minute and the 1 hour tokens together). A request whose model has no price is in neither column.
 # per-item-stats.csv reports every per-item figure as n, median, p25 and p75, and never a mean: tokens per request (input, cache
 # write, cache read, output, and the four together), list cost per request, requests per session and list cost per session. The
-# statistic is the one the glossary names for each term (critic docs/analysis/glossary.md). Percentiles use linear interpolation
+# statistic follows the glossary's general rule: a median with its p25, p75 and n, never a mean alone (critic docs/analysis/glossary.md). Percentiles use linear interpolation
 # between order statistics (the position is p*(n-1) over the sorted values). A figure with n of 0 prints n/a in its three
 # statistic cells, never 0. Cost figures count priced requests only; token figures count every request that is not synthetic.
 import json,glob,os,re,collections,csv,sys,gzip,hashlib

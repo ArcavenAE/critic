@@ -1319,7 +1319,7 @@ def rec_tok(sid, n, out_tok, in_tok=10, cr=100, cw=0, model=MODEL, ts='2026-10-0
 
 class PerItemStats(unittest.TestCase):
     """M8: every per-item figure is reported as median, p25, p75 and n, never a mean alone.
-    The statistic field of each term is in critic docs/analysis/glossary.md (glossary.md#throughput and its siblings);
+    The glossary's general rule (critic docs/analysis/glossary.md): a median with its p25, p75 and n, never a mean alone;
     the percentile rule is linear interpolation between order statistics, stated in the script header."""
     FILE = 'per-item-stats.csv'
 
