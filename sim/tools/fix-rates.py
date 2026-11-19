@@ -11,6 +11,9 @@
 # Throughput (merged PRs in the period) prints beside both rates; a rate is never read alone. Counts and rates only,
 # no mean, no author, no seat. A diagnostic, never a gate (ADR-007). Trailers are a signal; a fix with no trailer
 # is invisible here, so a low rate is a floor on the failures, not proof of none.
+# fix_trailers_seen counts the Fixes-PR trailers carried by the period's merges, and bug_closes_seen the bug closes. They are
+#   signs of trailer adoption. They are not what makes change_fail measured: change_fail counts the period's merges that a
+#   LATER fix names, so a period can show trailers and still be too young to show its failures, and one with none reads 0.
 # Input: {"prs": [{repo, number, mergedAt (null when unmerged), text (body plus commit messages)}],
 #         "bd_issues": [{id, issue_type}]}. Other keys are ignored and never printed.
 # Collect: one `gh pr view` per PR, because a list call that asks for commits passes GitHub's GraphQL node limit
@@ -88,7 +91,8 @@ def main(path, kind='month'):
                 'throughput': len(ks),
                 'change_fail': rate(len([k for k in ks if k in failed]), len(ks)),
                 'rework': rate(len([k for k in ks if k in rework]), len(ks)),
-                # a month with no trailers seen reads as unmeasured, not as clean
+                # a sign of trailer adoption: trailers carried by this period's merges, which is not the same set
+                # as the merges change_fail counts (the ones a later fix names)
                 'fix_trailers_seen': sum(trailers[k] for k in ks),
                 'bug_closes_seen': sum(bug_closes[k] for k in ks)}
     print(json.dumps({'by_repo': by_repo, 'unresolved_links': unresolved,

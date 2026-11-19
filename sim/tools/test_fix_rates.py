@@ -116,7 +116,7 @@ class Grouping(unittest.TestCase):
 
 
 class Unmeasured(unittest.TestCase):
-    def test_trailers_seen_tells_a_clean_month_from_an_unmeasured_one(self):
+    def test_trailers_seen_is_a_sign_of_trailer_adoption(self):
         out = run([pr(1, '2026-11-01T10:00:00Z'), pr(2, '2026-11-02T10:00:00Z')])
         self.assertEqual(at(P(out)['2026-11'], 'fix_trailers_seen'), 0)
         out = run([pr(1, '2026-11-01T10:00:00Z'), pr(2, '2026-11-02T10:00:00Z', 'Fixes-PR: demo/alpha#1')])
