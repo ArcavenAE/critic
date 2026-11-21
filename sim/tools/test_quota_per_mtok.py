@@ -226,6 +226,61 @@ class Pairing(unittest.TestCase):
         self.assertNotEqual(day_row(out, '2026-11-02')['points_per_mtok'], 'n/a')
 
 
+class SharedHome(unittest.TestCase):
+    """Review of ArcavenAE/critic#70: the ledger reads one config home and cannot split a day's tokens between two keys on it,
+    so a cluster-day with more than one key on the paired home prints n/a for each of those keys, never a split or a copy."""
+
+    def two_keys_one_day(self):
+        sub = [reading('2026-11-02T01:00:00Z', 10, home='/h/a', backend='subscription'),
+               reading('2026-11-02T11:00:00Z', 40, home='/h/a', backend='subscription')]
+        api = [reading('2026-11-02T13:00:00Z', 5, home='/h/a', backend='api'),
+               reading('2026-11-02T23:00:00Z', 6, home='/h/a', backend='api')]
+        return run({'2026-11-02': sub + api}, [('demo', '2026-11-02', even(2000000))], config_home='/h/a')
+
+    def test_two_keys_on_the_paired_home_on_one_day_each_print_n_a_with_a_shared_home_note(self):
+        out = self.two_keys_one_day()
+        accts = sorted(at(out, 'by_cluster', 'demo', 'by_account'))
+        self.assertEqual(len(accts), 2)
+        for a in accts:
+            r = day_row(out, '2026-11-02', account=a)
+            self.assertEqual(r['points_per_mtok'], 'n/a', 'the home has two keys that day, so no ratio: %s' % r)
+            self.assertIn('home shared by 2 keys', str(r.get('note')))
+            c = cell(out, account=a)
+            self.assertEqual((c['n'], c['median'], c['p25'], c['p75']), (0, 'n/a', 'n/a', 'n/a'))
+
+    def test_the_points_of_each_shared_key_are_still_reported(self):
+        out = self.two_keys_one_day()
+        pts = sorted(day_row(out, '2026-11-02', account=a)['points'] for a in at(out, 'by_cluster', 'demo', 'by_account'))
+        self.assertEqual(pts, [1, 30])
+
+    def test_one_key_on_the_paired_home_is_computed_as_before(self):
+        by = even(2000000)
+        out = run({'2026-11-02': [reading('2026-11-02T01:00:00Z', 10, home='/h/a'),
+                                  reading('2026-11-02T11:00:00Z', 40, home='/h/a')]},
+                  [('demo', '2026-11-02', by)], config_home='/h/a')
+        r = day_row(out, '2026-11-02')
+        self.assertAlmostEqual(r['points_per_mtok'], 30 / tokens_m(by))
+        self.assertNotIn('note', r)
+
+    def test_two_keys_on_the_paired_home_on_different_days_are_each_computed_on_their_own_day(self):
+        by = even(2000000)
+        out = run({'2026-11-02': [reading('2026-11-02T01:00:00Z', 10, home='/h/a', backend='subscription'),
+                                  reading('2026-11-02T11:00:00Z', 40, home='/h/a', backend='subscription')],
+                   '2026-11-03': [reading('2026-11-03T01:00:00Z', 5, home='/h/a', backend='api'),
+                                  reading('2026-11-03T11:00:00Z', 9, home='/h/a', backend='api')]},
+                  [('demo', '2026-11-02', by), ('demo', '2026-11-03', by)], config_home='/h/a')
+        accts = sorted(at(out, 'by_cluster', 'demo', 'by_account'))
+        self.assertEqual(len(accts), 2)
+        got = {}
+        for a in accts:
+            for r in at(cell(out, account=a), 'days'):
+                if r['points_per_mtok'] != 'n/a':
+                    got[r['day']] = r['points_per_mtok']
+        self.assertEqual(sorted(got), ['2026-11-02', '2026-11-03'])
+        self.assertAlmostEqual(got['2026-11-02'], 30 / tokens_m(by))
+        self.assertAlmostEqual(got['2026-11-03'], 4 / tokens_m(by))
+
+
 class Gaps(unittest.TestCase):
     def test_a_day_with_tokens_and_no_readings_prints_n_a_not_zero(self):
         out = run({'2026-11-02': [reading('2026-11-02T01:00:00Z', 10), reading('2026-11-02T02:00:00Z', 12)]},
