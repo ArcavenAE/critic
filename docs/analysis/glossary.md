@@ -1,6 +1,6 @@
 # Glossary of agent-team metrics
 
-This glossary fixes ten terms used when the fleet measures its own agent teams, so critic, director and marvel mean the same thing by each. critic computes the numbers; director and marvel collect and emit what critic reads. Each entry names its published source, its start and end events, its unit, the fleet source, the statistic, and the instability measure it is reported with.
+This glossary fixes eleven terms used when the fleet measures its own agent teams, so critic, director and marvel mean the same thing by each. critic computes the numbers; director and marvel collect and emit what critic reads. Each entry names its published source, its start and end events, its unit, the fleet source, the statistic, and the instability measure it is reported with.
 
 Every metric here is diagnostic. None is a gate, and none turns into a pass or fail without its own ratified decision. Report a median with its p25, p75 and n, never a mean alone. Report by role and team, not by seat. Until a key exists, report by repo. A throughput count is never printed alone: it sits beside its instability measure, so no single number can be chased.
 
@@ -18,6 +18,7 @@ Sources are those of the agent-team metrics survey behind this plan. Where two s
 | [change fail rate](#change-fail-rate) | throughput |
 | [rework rate](#rework-rate) | throughput |
 | [human revision cost](#human-revision-cost) | throughput |
+| [quota points per million tokens](#quota-points-per-million-tokens) | none (a capacity measure), its rollover count |
 
 ## cost-of-pass
 
@@ -108,3 +109,12 @@ Sources are those of the agent-team metrics survey behind this plan. Where two s
 - **Fleet source:** GitHub reviews and commits.
 - **Statistic:** median with p25, p75 and n, and the share merged with zero rounds.
 - **Reported with:** throughput.
+
+## quota points per million tokens
+
+- **Definition:** how many points of an account's rate-limit quota a million tokens of work drew, as a capacity measure. A point is one percent of one login's own cap, so points of two logins are different units and are never added.
+- **Start and end events:** a series is one account key (the whole key object that marvel persists, compared as a whole) and one window. A step is the `used_percent` rise between two consecutive readings of a series that carry the same `resets_at`. A step belongs to the UTC day of its later reading. A change of `resets_at` between two readings is a rollover: it adds 0 points and is counted. A fall of `used_percent` inside one window adds 0 points and is counted apart. The tokens are those of the same UTC day.
+- **Unit:** points per million tokens, per account, window and day.
+- **Fleet source:** marvel's persisted readings (`state/account-series/YYYY-MM-DD.jsonl`) and the ledger's `daily-tokens.csv`. The ledger reads one config home, so a cell is computed only where its key's config home is the run's; any other cell prints n/a, with a note. On a cluster-day where more than one key on that config home has a reading (as after a backend switch), the day's tokens cannot be split between the keys, so each of those keys prints n/a for that day with the note "home shared by N keys"; their points still print, and a key alone on the home that day is computed.
+- **Statistic:** median with p25, p75 and n over days, never a mean. A day with no readings, no tokens or no step prints n/a, never 0. The rollover and fall counts print beside the ratio.
+- **Reported with:** none, since it measures capacity and not delivery; its rollover count is its instability measure. Which token classes the denominator counts is held for an operator ruling, so the tool takes them as `--classes` and refuses to run without them.

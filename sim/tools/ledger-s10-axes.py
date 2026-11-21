@@ -104,6 +104,10 @@
 # by-token-class.csv splits this host's list price by token class (input, cache write, cache read, output): requests is the
 # count of priced requests that carry tokens of that class, list_usd the tokens times the price the script already applies
 # (cache write is the 5 minute and the 1 hour tokens together). A request whose model has no price is in neither column.
+# daily-tokens.csv (cluster, day, uncached_input, write_5m, write_1h, read, output, total) sums the tokens of every request that
+# is not synthetic, per UTC day of the audit month, with the class names and the 5 minute and 1 hour cache write split of
+# ledger-s10.csv. total is the five columns added. It is the denominator source for quota-per-mtok.py (glossary.md#quota-points-per-million-tokens).
+# It reads one PROJECTS_ROOT, so it is one config home's tokens.
 # per-item-stats.csv reports every per-item figure as n, median, p25 and p75, and never a mean: tokens per request (input, cache
 # write, cache read, output, and the four together), list cost per request, requests per session and list cost per session. The
 # statistic follows the glossary's general rule: a median with its p25, p75 and n, never a mean alone (critic docs/analysis/glossary.md). Percentiles use linear interpolation
@@ -439,6 +443,7 @@ dirrows=collections.defaultdict(lambda:collections.Counter()); inhrows=collectio
 TOKEN_CLASSES=('input','cache write','cache read','output')
 tk=collections.defaultdict(lambda:collections.Counter())
 reqtok=collections.defaultdict(list); requsd=[]; sessreq=collections.Counter(); sessusd=collections.Counter()
+dtok=collections.defaultdict(collections.Counter)
 for e in msgs.values():
     if e['model']=='<synthetic>': continue
     lab,team,role,method,base=seat(e['sid'])
@@ -447,6 +452,7 @@ for e in msgs.values():
     usd=round((e['in']*p['in']+e['cw5v']*p['cw5']+e['cw1']*p['cw1']+e['cr']*p['cr']+e['out']*p['out'])) if p else 0
     tcl=(e['in'],e['cw5v']+e['cw1'],e['cr'],e['out'])
     for nm,v in zip(TOKEN_CLASSES,tcl): reqtok[nm].append(v)
+    dt=dtok[e['ts'][:10]]; dt['uncached_input']+=e['in']; dt['write_5m']+=e['cw5v']; dt['write_1h']+=e['cw1']; dt['read']+=e['cr']; dt['output']+=e['out']
     reqtok['total'].append(sum(tcl)); sessreq[e['sid']]+=1
     if p: requsd.append(usd); sessusd[e['sid']]+=usd
     k=(e['ts'][:10],repo,goal,a,team,role)
@@ -557,6 +563,9 @@ wr('per-item-stats.csv',['cluster','item','unit','n','median','p25','p75'],
    [stat_row('tokens per request: '+nm,'tokens',reqtok[nm]) for nm in TOKEN_CLASSES+('total',)]
    +[stat_row('list cost per request','usd_micro',requsd),stat_row('requests per session','requests',list(sessreq.values())),
      stat_row('list cost per session','usd_micro',list(sessusd.values()))])
+DTOK=('uncached_input','write_5m','write_1h','read','output')
+wr('daily-tokens.csv',['cluster','day',*DTOK,'total'],
+   [[CLUSTER,d,*[dtok[d][c] for c in DTOK],sum(dtok[d][c] for c in DTOK)] for d in sorted(dtok)])
 wr('by-token-class.csv',['cluster','token_class','requests','list_usd'],
    [[CLUSTER,nm,tk[nm]['requests'],round(tk[nm]['usd_micro']/1e6,2)] for nm in TOKEN_CLASSES])
 if DSIG:
