@@ -24,6 +24,10 @@
 # Points are a percent of one login's own cap, so points of two accounts are never added: one cell per account, window and day,
 # and no cluster figure.
 # Pairing: a cell is computed only where its key's config_home equals CONFIG_HOME. Any other cell prints n/a, with a note.
+# Shared home: the ledger reads one config home and cannot split a day's tokens between keys. On a cluster-day where more than one
+# key on CONFIG_HOME has a reading, each of those keys prints n/a for that day (points_per_mtok and tokens_m) with the note
+# "home shared by N keys". Their points are still reported, and the tokens are never divided between them. A key alone on the home
+# that day is computed as above.
 # Day row: points, tokens_m (the counted classes over a million), points_per_mtok, rollovers, falls. points_per_mtok is n/a, never 0,
 # for a day with no step, no readings, no tokens or a config home that does not pair. Cell: n, median, p25, p75 of the days'
 # points_per_mtok (linear interpolation between order statistics, position p*(n-1)); n/a in all three when n is 0. No mean.
@@ -122,6 +126,13 @@ def build(series_dir, tokens_csv, config_home, classes):
     token_days = {}
     for cluster, day in tokens:
         token_days.setdefault(cluster, set()).add(day)
+    # Keys with a reading on the token run's config home, per cluster and UTC day. The ledger reads one config home and cannot
+    # split a day's tokens between two keys on it, so a cluster-day with more than one such key gets no ratio for any of them.
+    home_keys = {}
+    for (cluster, kj, _window), rows in series.items():
+        if (rows[0][3].get('config_home') or '') == config_home:
+            for at, _p, _r, _k in rows:
+                home_keys.setdefault((cluster, at.strftime('%Y-%m-%d')), set()).add(kj)
     by_cluster = {}
     for (cluster, _kj, window), rows in sorted(series.items()):
         rows.sort(key=lambda r: r[0])
@@ -150,12 +161,17 @@ def build(series_dir, tokens_csv, config_home, classes):
             x = days[day]
             tm = tokens.get((cluster, day))
             ratio = 'n/a'
-            if paired and x['steps'] and tm:
+            sharers = len(home_keys.get((cluster, day), ())) if paired else 0
+            shared = sharers > 1
+            if paired and not shared and x['steps'] and tm:
                 ratio = x['points'] / tm
                 ratios.append(ratio)
             pts = x['points'] if x['seen'] else 'n/a'
-            out_days.append({'day': day, 'points': pts, 'tokens_m': tm if (paired and tm is not None) else 'n/a',
-                             'points_per_mtok': ratio, 'rollovers': x['rollovers'], 'falls': x['falls']})
+            row = {'day': day, 'points': pts, 'tokens_m': tm if (paired and not shared and tm is not None) else 'n/a',
+                   'points_per_mtok': ratio, 'rollovers': x['rollovers'], 'falls': x['falls']}
+            if shared:
+                row['note'] = 'home shared by %d keys, so the day\'s tokens cannot be split between them and no ratio is computed' % sharers
+            out_days.append(row)
         ratios.sort()
         cell = {'days': out_days, 'n': len(ratios),
                 'median': quantile(ratios, 0.5) if ratios else 'n/a',
