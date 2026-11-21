@@ -1375,6 +1375,27 @@ class PerItemStats(unittest.TestCase):
         row = self.stats([('s1', [rec_tok('s1', 1, 9)])])[('tokens per request: output', 'tokens')]
         self.assertEqual([row['n'], row['median'], row['p25'], row['p75']], ['1', '9', '9', '9'])
 
+    # ---- M11: daily token totals, the denominator of quota points per million tokens ----
+    def test_daily_tokens_csv_sums_each_token_class_per_cluster_and_day(self):
+        res = run(SCRIPT, [('s1', None, [rec('s1', 1, ts='2026-10-05T10:00:00Z'), rec('s1', 2, ts='2026-10-05T11:00:00Z'),
+                                         rec('s1', 3, ts='2026-10-06T09:00:00Z')])])
+        self.assertIn('daily-tokens.csv', res)
+        rows = {r['day']: r for r in res['daily-tokens.csv']}
+        self.assertEqual(sorted(rows), ['2026-10-05', '2026-10-06'])
+        # rec() carries input 10, cache write 0, cache read 100, output 5 per request
+        self.assertEqual({k: rows['2026-10-05'][k] for k in ('cluster', 'input', 'cache_write', 'cache_read', 'output', 'total')},
+                         {'cluster': 'demo', 'input': '20', 'cache_write': '0', 'cache_read': '200', 'output': '10', 'total': '230'})
+        self.assertEqual(rows['2026-10-06']['total'], '115')
+
+    def test_daily_tokens_total_equals_the_four_classes_and_the_header_names_the_file(self):
+        res = run(SCRIPT, [('s1', None, [rec('s1', 1)])])
+        self.assertIn('daily-tokens.csv', res)
+        r = res['daily-tokens.csv'][0]
+        self.assertEqual(int(r['total']), sum(int(r[k]) for k in ('input', 'cache_write', 'cache_read', 'output')))
+        with open(SCRIPT) as fh:
+            head = ''.join(l for l in iter(lambda: fh.readline(), '') if l.startswith('#'))
+        self.assertIn('daily-tokens.csv', head)
+
     def test_the_header_cites_the_glossary_and_states_the_percentile_rule(self):
         with open(SCRIPT) as fh:
             head = ''.join(l for l in iter(lambda: fh.readline(), '') if l.startswith('#'))
