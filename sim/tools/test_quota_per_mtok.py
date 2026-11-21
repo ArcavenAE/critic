@@ -5,9 +5,10 @@
 # Measure: quota points per million tokens, docs/analysis/glossary.md#quota-points-per-million-tokens
 # Design: architect reply of 2026-11-21 (aae-orc-0oejz). A series is (the whole key object, window), compared with ==;
 # a rollover is resets_at changing between consecutive readings; points are never summed across accounts; the token
-# classes the denominator counts are HELD for an operator ruling, so no test here assumes a class choice: the expected
-# denominator is read from the script's own named constant DENOMINATOR_CLASSES.
-import csv, importlib.util, json, os, subprocess, sys, tempfile, unittest
+# classes the denominator counts are HELD for an operator ruling, so the script carries no choice: it refuses to run
+# without --classes, and each test here passes its own set and computes the expected figure from that same set.
+# A set the test picks is an input, not a recommendation.
+import csv, json, os, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, 'quota-per-mtok.py')
@@ -57,22 +58,14 @@ def at(d, *keys):
     return d
 
 
-def denominator_classes():
-    assert os.path.exists(SCRIPT), 'quota-per-mtok.py is missing'
-    spec = importlib.util.spec_from_file_location('quota_per_mtok', SCRIPT)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    assert hasattr(mod, 'DENOMINATOR_CLASSES'), 'quota-per-mtok.py names no DENOMINATOR_CLASSES constant'
-    got = tuple(mod.DENOMINATOR_CLASSES)
-    assert got and set(got) <= set(CLASSES), 'DENOMINATOR_CLASSES %r is not a non-empty subset of %r' % (got, CLASSES)
-    return got
+TEST_CLASSES = ('uncached_input', 'write_5m', 'write_1h', 'output')
 
 
-def tokens_m(by):
-    return sum(by[c] for c in denominator_classes() if c in by) / 1e6
+def tokens_m(by, classes=TEST_CLASSES):
+    return sum(by[c] for c in classes if c in by) / 1e6
 
 
-def run(lines_by_day, token_rows, extra_lines=(), config_home=''):
+def run(lines_by_day, token_rows, extra_lines=(), config_home='', classes=TEST_CLASSES, want_rc=0):
     """lines_by_day: {'2026-11-02': [reading, ...]}; each reading is written to that day's file. extra_lines are raw
     strings added to the first day file (a torn line, for one). config_home is the one the token run read."""
     with tempfile.TemporaryDirectory() as d:
@@ -87,8 +80,13 @@ def run(lines_by_day, token_rows, extra_lines=(), config_home=''):
                         fh.write(raw + '\n')
         tk = os.path.join(d, 'daily-tokens.csv')
         tokens_csv(tk, token_rows)
-        r = subprocess.run([sys.executable, '-I', SCRIPT, series, tk, config_home], capture_output=True, text=True)
-        assert r.returncode == 0, 'quota-per-mtok.py exited %s: %s' % (r.returncode, r.stderr)
+        argv = [sys.executable, '-I', SCRIPT, series, tk, config_home]
+        if classes is not None:
+            argv += ['--classes', ','.join(classes)]
+        r = subprocess.run(argv, capture_output=True, text=True)
+        if want_rc is None:
+            return r
+        assert r.returncode == want_rc, 'quota-per-mtok.py exited %s: %s' % (r.returncode, r.stderr)
         return json.loads(r.stdout)
 
 
@@ -178,17 +176,37 @@ class Points(unittest.TestCase):
 
 
 class Denominator(unittest.TestCase):
-    def test_the_denominator_counts_exactly_the_classes_the_named_constant_lists(self):
+    def test_the_denominator_counts_exactly_the_classes_the_caller_passes(self):
         by = even(3000000)
-        out = run({'2026-11-02': [reading('2026-11-02T01:00:00Z', 10), reading('2026-11-02T02:00:00Z', 16)]},
-                  [('demo', '2026-11-02', by)])
-        self.assertAlmostEqual(day_row(out, '2026-11-02')['tokens_m'], sum(by[c] for c in denominator_classes()) / 1e6)
+        rows = {'2026-11-02': [reading('2026-11-02T01:00:00Z', 10), reading('2026-11-02T02:00:00Z', 16)]}
+        for classes in (('read',), ('uncached_input', 'output'), ('uncached_input', 'write_5m', 'write_1h', 'read', 'output')):
+            out = run(rows, [('demo', '2026-11-02', by)], classes=classes)
+            self.assertAlmostEqual(day_row(out, '2026-11-02')['tokens_m'], tokens_m(by, classes), msg=str(classes))
 
-    def test_the_script_does_not_print_a_class_choice_as_settled_in_its_header(self):
+    def test_the_report_names_the_classes_it_counted(self):
+        out = run({'2026-11-02': [reading('2026-11-02T01:00:00Z', 10), reading('2026-11-02T02:00:00Z', 16)]},
+                  [('demo', '2026-11-02', even(1000000))], classes=('read', 'output'))
+        self.assertEqual(at(out, 'denominator_classes'), ['read', 'output'])
+
+    def test_without_classes_it_refuses_and_names_the_pending_ruling(self):
+        r = run({'2026-11-02': [reading('2026-11-02T01:00:00Z', 10)]}, [('demo', '2026-11-02', even(1000000))],
+                classes=None, want_rc=None)
+        self.assertNotEqual(r.returncode, 0, 'a run with no --classes must refuse, not print a report')
+        self.assertEqual(r.stdout, '')
+        self.assertIn('operator ruling', r.stderr)
+        self.assertIn('--classes', r.stderr)
+
+    def test_an_unknown_class_name_is_refused_and_named(self):
+        r = run({'2026-11-02': [reading('2026-11-02T01:00:00Z', 10)]}, [('demo', '2026-11-02', even(1000000))],
+                classes=('read', 'cache_reads'), want_rc=None)
+        self.assertNotEqual(r.returncode, 0, 'an unknown class name must be refused')
+        self.assertIn('cache_reads', r.stderr)
+
+    def test_the_script_header_says_the_class_choice_is_held_for_an_operator_ruling(self):
         self.assertTrue(os.path.exists(SCRIPT), 'quota-per-mtok.py is missing')
         with open(SCRIPT) as fh:
             head = ''.join(l for l in iter(lambda: fh.readline(), '') if l.startswith('#')).lower()
-        self.assertIn('denominator_classes', head)
+        self.assertIn('--classes', head)
         self.assertIn('operator ruling', head)
 
 
